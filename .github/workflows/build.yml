@@ -22,6 +22,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      # A Flutter that still accepts the project's Gradle (8.14): the newest
+      # one wants Gradle 9.3.1. If a later step says a package needs a newer
+      # Dart, raise this to 3.38.x.
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -33,6 +36,15 @@ jobs:
       - name: Speech models
         run: |
           set -e
+          # Every asset folder pubspec.yaml names must exist (GitHub keeps
+          # no empty folders, e.g. assets/models/kws): made, with a
+          # placeholder the app skips.
+          grep -E '^[[:space:]]*-[[:space:]]*assets/.*/[[:space:]]*$' pubspec.yaml \
+            | sed -E 's/^[[:space:]]*-[[:space:]]*//; s/[[:space:]]*$//' \
+            | while read -r d; do
+                mkdir -p "$d"
+                [ -n "$(ls -A "$d")" ] || touch "$d/.gitkeep"
+              done
           mkdir -p assets/models/moonshine
           if [ ! -f assets/models/moonshine/preprocess.onnx ]; then
             curl -fsSL -o m.tar.bz2 \
