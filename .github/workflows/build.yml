@@ -16,7 +16,11 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    timeout-minutes: 120
+    # Gradle's big cache on the machine's second disk (/mnt), not the
+    # small main one.
+    env:
+      GRADLE_USER_HOME: /mnt/gradle-home
     steps:
       # GitHub's machine has little free disk; the build (Flutter, Gradle,
       # the speech models) needs more. Tools this build never uses go.
@@ -31,7 +35,13 @@ jobs:
             /opt/hostedtoolcache/go /opt/hostedtoolcache/PyPy \
             /usr/local/lib/node_modules /usr/local/share/chromium || true
           sudo docker image prune --all --force >/dev/null 2>&1 || true
-          df -h /
+          # Private repos get a 7 GB machine; Gradle can want more, and then
+          # GitHub kills the run ("canceled"). Extra memory on the second disk.
+          sudo fallocate -l 8G /mnt/swapfile && sudo chmod 600 /mnt/swapfile \
+            && sudo mkswap /mnt/swapfile >/dev/null && sudo swapon /mnt/swapfile || true
+          sudo mkdir -p /mnt/gradle-home && sudo chown -R "$USER" /mnt/gradle-home
+          df -h / /mnt
+          free -h
 
       - uses: actions/checkout@v4
 
@@ -101,6 +111,13 @@ jobs:
           rm -rf android/.gradle android/.kotlin android/build android/app/build \
                  android/local.properties android/app/.cxx build .dart_tool
           find android -name "*.lock" -path "*/.gradle/*" -delete 2>/dev/null || true
+          # Flutter's default asks Gradle for 8 GB -- more than this machine
+          # has, so GitHub kills it. 4 GB, and fewer jobs at once.
+          touch android/gradle.properties
+          sed -i '/^org.gradle.jvmargs/d; /^org.gradle.workers.max/d' android/gradle.properties
+          echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" >> android/gradle.properties
+          echo "org.gradle.workers.max=2" >> android/gradle.properties
+          cat android/gradle.properties
 
       - run: flutter pub get
 
