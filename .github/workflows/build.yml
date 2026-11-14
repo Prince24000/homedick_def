@@ -1,7 +1,7 @@
 # HomeVoice app: build the APK on GitHub.
 # Put this file in the repo at .github/workflows/build.yml
 # Run it: the repo's Actions tab -> "Build APK" -> Run workflow.
-# The APK is under the finished run -> Artifacts -> homevoice-apk.
+# The APK is on the repo's Releases page (newest at the top): HomeVoice.apk.
 
 name: Build APK
 
@@ -9,6 +9,9 @@ on:
   workflow_dispatch:
   push:
     branches: [main, master]
+
+permissions:
+  contents: write
 
 jobs:
   build:
@@ -106,8 +109,30 @@ jobs:
       # Chromebooks, emulators). The freed disk above makes room for all three.
       - run: flutter build apk --release --target-platform android-arm,android-arm64,android-x64
 
-      - uses: actions/upload-artifact@v4
+      # Proves the APK can install before anyone downloads it: signed (an
+      # unsigned APK never installs), and which Android versions and chips
+      # it takes. Fails here, in plain words, if it is not signed.
+      - name: Check the APK
+        run: |
+          APK=build/app/outputs/flutter-apk/app-release.apk
+          ls -la build/app/outputs/flutter-apk/
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          echo "== signature =="
+          if ! "$BT/apksigner" verify --print-certs "$APK" | head -3; then
+            echo "THE APK IS NOT SIGNED -- it cannot install on any phone."
+            exit 1
+          fi
+          echo "== what it needs =="
+          "$BT/aapt2" dump badging "$APK" 2>/dev/null \
+            | grep -E "^package:|sdkVersion|native-code" || true
+
+      # The APK itself, on the repo's Releases page: tap it, it downloads
+      # as an .apk (no zip to open).
+      - name: Name the APK
+        run: cp build/app/outputs/flutter-apk/app-release.apk HomeVoice.apk
+
+      - uses: softprops/action-gh-release@v2
         with:
-          name: homevoice-apk
-          path: build/app/outputs/flutter-apk/app-release.apk
-          retention-days: 14
+          tag_name: build-${{ github.run_number }}
+          name: HomeVoice build ${{ github.run_number }}
+          files: HomeVoice.apk
