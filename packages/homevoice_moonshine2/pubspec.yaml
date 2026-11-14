@@ -1,0 +1,22 @@
+name: homevoice_moonshine2
+description: >-
+  Moonshine's own Android library (ai.moonshine:moonshine-voice), for the
+  newer Small and Medium models, fed with audio the app captured -- so the
+  app keeps the microphone. Android only; HomeVoice's local plugin.
+version: 0.1.0
+publish_to: none
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+  flutter: ">=3.22.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.homevoice.moonshine2
+        pluginClass: Moonshine2Plugin

@@ -1,0 +1,6 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- The model is fetched from Moonshine's servers the first time it is
+         loaded (about 123 MB for Small); after that nothing leaves the
+         phone. The app already holds this permission for the hub. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+</manifest>

@@ -1,0 +1,61 @@
+name: homevoice
+description: >-
+  Hands-free voice client for the home voice-control server. Wake word ->
+  short listening window -> on-device Moonshine transcription -> the same
+  authenticated WebSocket protocol the browser test client speaks, with the
+  captured audio attached for server-side speaker verification.
+publish_to: "none"
+version: 0.1.0
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # Offline speech stack: keyword spotting (wake word), Silero VAD, and
+  # Moonshine ASR, all through one maintained package. Pin the version and
+  # check lib/audio/pipeline.dart against the dart-api-examples of the SAME
+  # version if you upgrade -- the constructor surface has moved before.
+  sherpa_onnx: ^1.12.0
+
+  # Microphone as a raw PCM16 stream at 16 kHz -- the one format Moonshine,
+  # Silero, and the server's decoder all agree on, captured natively so no
+  # resample sits between what was said and what is verified.
+  record: ^5.2.0
+
+  flutter_tts: ^4.2.0            # spoken feedback; the app's real "screen"
+  flutter_secure_storage: ^9.2.0 # shared secret in the Android keystore
+  flutter_foreground_task: ^8.17.0 # keeps the mic + socket alive off-screen
+  crypto: ^3.0.5                 # HMAC-SHA256 for the auth challenge
+  permission_handler: ^11.3.0
+  path_provider: ^2.1.4
+  shared_preferences: ^2.3.0     # non-secret settings (candidates, model size)
+  webview_flutter: ^4.14.1
+  cryptography: ^2.7.0      # Ed25519 for this phone's identity
+  device_info_plus: ^11.0.0
+  url_launcher: ^6.3.2
+  mobile_scanner: ^7.4.0
+  speech_to_text: ^7.4.0
+  file_picker: ^8.1.2
+  homevoice_google_stt:
+    path: packages/homevoice_google_stt
+  homevoice_moonshine2:
+    path: packages/homevoice_moonshine2
+
+dev_dependencies:
+  flutter_lints: ^4.0.0
+
+dependency_overrides:
+  record_linux: ^1.1.0
+
+flutter:
+  uses-material-design: true
+  assets:
+    # The SAME certificate the server presents. Pinned in socket_client.dart,
+    # which is what deletes the entire trust-the-cert-on-every-phone problem:
+    # the app trusts exactly this cert and nothing else, on every address.
+    - assets/models/
+    - assets/models/moonshine/
+    - assets/models/kws/
