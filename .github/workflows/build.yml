@@ -76,6 +76,14 @@ jobs:
             echo "WARNING: no DEBUG_KEYSTORE_BASE64 secret -- this APK will not install over the last one"
           fi
 
+      # Left-overs from the laptop (uploaded through the website, which
+      # ignores .gitignore) break Gradle's cache: start clean.
+      - name: Clean laptop leftovers
+        run: |
+          rm -rf android/.gradle android/.kotlin android/build android/app/build \
+                 android/local.properties android/app/.cxx build .dart_tool
+          find android -name "*.lock" -path "*/.gradle/*" -delete 2>/dev/null || true
+
       - run: flutter pub get
 
       - run: flutter build apk --release
