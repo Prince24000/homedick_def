@@ -1,12 +1,18 @@
 # HomeVoice app: build the APK on GitHub.
 # Put this file in the repo at .github/workflows/build.yml
 # Run it: the repo's Actions tab -> "Build APK" -> Run workflow.
-# The APK is on the repo's Releases page (newest at the top): HomeVoice.apk.
+# The APK is on the repo's Releases page (newest at the top): HomeVoice.apk (update,
+# no speech model inside) or HomeVoice-full.apk ("models" ticked: a phone's first install).
 
 name: Build APK
 
 on:
   workflow_dispatch:
+    inputs:
+      models:
+        description: "Put the speech model inside (only for a phone that never had the app: ~430 MB instead of ~140 MB)"
+        type: boolean
+        default: false
   push:
     branches: [main, master]
 
@@ -56,7 +62,7 @@ jobs:
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
-          flutter-version: 3.38.x
+          flutter-version: 3.35.x
           cache: true
 
       # The speech model files are too big to upload through the website,
@@ -74,7 +80,10 @@ jobs:
                 [ -n "$(ls -A "$d")" ] || touch "$d/.gitkeep"
               done
           mkdir -p assets/models/moonshine
-          if [ ! -f assets/models/moonshine/preprocess.onnx ]; then
+          # UPDATES leave the speech model out: a phone that had the app
+          # already holds it (copied out on first start; an update keeps it).
+          # Only a FIRST install on a phone needs it inside.
+          if [ "${{ inputs.models }}" = "true" ] && [ ! -f assets/models/moonshine/preprocess.onnx ]; then
             curl -fsSL -o m.tar.bz2 \
               https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-int8.tar.bz2
             tar -xjf m.tar.bz2
@@ -88,6 +97,7 @@ jobs:
             curl -fsSL -o assets/models/silero_vad.onnx \
               https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
           fi
+          [ -n "$(ls -A assets/models/moonshine)" ] || touch assets/models/moonshine/.gitkeep
           ls -la assets/models assets/models/moonshine
 
       # The same signing key every build, so a new APK installs over the
@@ -121,10 +131,10 @@ jobs:
 
       - run: flutter pub get
 
-      # One APK for every phone: 64-bit ARM (most phones), 32-bit ARM (older
-      # and budget / Android Go phones) and x86_64 (a few tablets,
-      # Chromebooks, emulators). The freed disk above makes room for all three.
-      - run: flutter build apk --release --target-platform android-arm,android-arm64,android-x64
+      # One APK for every phone: 64-bit ARM (most phones) and 32-bit ARM (older
+      # and budget / Android Go phones). x86_64 (emulators, almost no phones)
+      # is left out: a smaller download.
+      - run: flutter build apk --release --target-platform android-arm,android-arm64
 
       # Proves the APK can install before anyone downloads it: signed (an
       # unsigned APK never installs), and which Android versions and chips
@@ -146,10 +156,13 @@ jobs:
       # The APK itself, on the repo's Releases page: tap it, it downloads
       # as an .apk (no zip to open).
       - name: Name the APK
-        run: cp build/app/outputs/flutter-apk/app-release.apk HomeVoice.apk
+        run: |
+          if [ "${{ inputs.models }}" = "true" ]; then N=HomeVoice-full.apk; else N=HomeVoice.apk; fi
+          cp build/app/outputs/flutter-apk/app-release.apk "$N"
+          echo "APK=$N" >> "$GITHUB_ENV"
 
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: build-${{ github.run_number }}
           name: HomeVoice build ${{ github.run_number }}
-          files: HomeVoice.apk
+          files: ${{ env.APK }}
