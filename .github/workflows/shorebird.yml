@@ -1,0 +1,194 @@
+# HomeVoice with Shorebird: one full install, then small patches.
+# Put this file in the repo at .github/workflows/shorebird.yml
+# Run it: Actions tab -> "Shorebird" -> Run workflow -> pick a step:
+#   init     ONCE: registers the app with Shorebird and saves shorebird.yaml
+#            in the repo (it commits it for you).
+#   release  a full APK (on the Releases page). Install it once; every
+#            phone that should get patches needs a release APK.
+#   patch    after a code change: a small patch. Phones running the release
+#            download it by themselves when the app opens, and use it from
+#            the next start.
+# Needs two repo secrets: DEBUG_KEYSTORE_BASE64 (signing) and SHOREBIRD_TOKEN
+# (a Shorebird service-account key, role App Manager).
+
+name: Shorebird
+
+on:
+  workflow_dispatch:
+    inputs:
+      step:
+        description: "init (once), release (full APK), or patch (small update)"
+        type: choice
+        options: [patch, release, init]
+        default: patch
+      models:
+        description: "release only: put the speech model inside (a phone's very first install)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  shorebird:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    env:
+      SHOREBIRD_TOKEN: ${{ secrets.SHOREBIRD_TOKEN }}
+      GRADLE_USER_HOME: /mnt/gradle-home
+      ANDROID_USER_HOME: /home/runner/.android
+      KEY_SHA256: f774a5aacd063d3b81d0d83023e56d208c6a2c9e8dc8693102f09cac4b2576b9
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL /usr/local/share/boost \
+            /usr/local/share/powershell /usr/share/swift /opt/az \
+            /opt/microsoft /opt/google /usr/local/julia* \
+            /opt/hostedtoolcache/go /opt/hostedtoolcache/PyPy \
+            /usr/local/lib/node_modules /usr/local/share/chromium || true
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          sudo fallocate -l 8G /mnt/swapfile && sudo chmod 600 /mnt/swapfile \
+            && sudo mkswap /mnt/swapfile >/dev/null && sudo swapon /mnt/swapfile || true
+          sudo mkdir -p /mnt/gradle-home && sudo chown -R "$USER" /mnt/gradle-home
+          df -h / /mnt
+
+      - uses: actions/checkout@v4
+
+      - name: Shorebird key present?
+        run: |
+          if [ -z "$SHOREBIRD_TOKEN" ]; then
+            echo "NO SHOREBIRD KEY: add the secret SHOREBIRD_TOKEN (Settings > Secrets and variables > Actions)."
+            exit 1
+          fi
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: shorebirdtech/setup-shorebird@v1
+        with:
+          cache: true
+
+      # ── init: once ─────────────────────────────────────────────────────
+      - name: Init (once)
+        if: inputs.step == 'init'
+        run: |
+          if [ -f shorebird.yaml ]; then
+            echo "shorebird.yaml is already in the repo: init was done. Run 'release' or 'patch'."
+            exit 0
+          fi
+          shorebird init --display-name "HomeVoice Defense"
+          cat shorebird.yaml
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add shorebird.yaml pubspec.yaml android/app/src/main/AndroidManifest.xml
+          git commit -m "Shorebird init: shorebird.yaml"
+          git push
+          echo "Done. Next: run the workflow again with 'release'."
+
+      # ── release and patch: the same build setup as build.yml ───────────
+      - name: Assets and speech model
+        if: inputs.step != 'init'
+        run: |
+          set -e
+          if [ ! -f shorebird.yaml ]; then
+            echo "Run 'init' first (shorebird.yaml is not in the repo yet)."
+            exit 1
+          fi
+          grep -E '^[[:space:]]*-[[:space:]]*assets/.*/[[:space:]]*$' pubspec.yaml \
+            | sed -E 's/^[[:space:]]*-[[:space:]]*//; s/[[:space:]]*$//' \
+            | while read -r d; do
+                mkdir -p "$d"
+                [ -n "$(ls -A "$d")" ] || touch "$d/.gitkeep"
+              done
+          mkdir -p assets/models/moonshine
+          # Patches must be built exactly like their release, so the model
+          # goes in only for a 'release' with "models" ticked.
+          if [ "${{ inputs.step }}" = "release" ] && [ "${{ inputs.models }}" = "true" ] \
+              && [ ! -f assets/models/moonshine/preprocess.onnx ]; then
+            curl -fsSL -o m.tar.bz2 \
+              https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/sherpa-onnx-moonshine-base-en-int8.tar.bz2
+            tar -xjf m.tar.bz2
+            src=sherpa-onnx-moonshine-base-en-int8
+            for f in preprocess.onnx encode.int8.onnx uncached_decode.int8.onnx cached_decode.int8.onnx tokens.txt; do
+              cp "$src/$f" assets/models/moonshine/
+            done
+            rm -rf m.tar.bz2 "$src"
+          fi
+          if [ ! -f assets/models/silero_vad.onnx ]; then
+            curl -fsSL -o assets/models/silero_vad.onnx \
+              https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/silero_vad.onnx
+          fi
+          [ -n "$(ls -A assets/models/moonshine)" ] || touch assets/models/moonshine/.gitkeep
+
+      - name: Signing key
+        if: inputs.step != 'init'
+        env:
+          KEY: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEY" ]; then
+            echo "NO SIGNING KEY: add the secret DEBUG_KEYSTORE_BASE64."
+            exit 1
+          fi
+          mkdir -p "$ANDROID_USER_HOME" ~/.android
+          echo "$KEY" | tr -d ' \r\n' | base64 -d > "$ANDROID_USER_HOME/debug.keystore"
+          cp "$ANDROID_USER_HOME/debug.keystore" ~/.android/debug.keystore
+          keytool -list -v -keystore "$ANDROID_USER_HOME/debug.keystore" -storepass android | grep -i "SHA256:" | head -1
+
+      - name: Clean leftovers
+        if: inputs.step != 'init'
+        run: |
+          rm -rf android/.gradle android/.kotlin android/build android/app/build \
+                 android/local.properties android/app/.cxx build .dart_tool
+          touch android/gradle.properties
+          sed -i '/^org.gradle.jvmargs/d; /^org.gradle.workers.max/d' android/gradle.properties
+          echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" >> android/gradle.properties
+          echo "org.gradle.workers.max=2" >> android/gradle.properties
+
+      # ── release: a full APK, on the Releases page ─────────────────────
+      # The newest Flutter 3.38 that Shorebird supports (3.38.1 or later):
+      # the project's packages need 3.38, its Gradle refuses anything newer.
+      # The build number is this run's number, so every release is new.
+      - name: Release (full APK)
+        if: inputs.step == 'release'
+        run: |
+          shorebird flutter versions list | tee versions.txt
+          V=$(grep -oE '3\.38\.[0-9]+' versions.txt | sort -V | tail -1)
+          if [ -z "$V" ] || [ "$V" = "3.38.0" ]; then
+            echo "Shorebird offers no Flutter 3.38.1 or later here."
+            exit 1
+          fi
+          echo "Flutter $V"
+          shorebird release android --artifact apk --flutter-version="$V" \
+            --target-platform android-arm,android-arm64,android-x64 \
+            -- --build-number=${{ github.run_number }}
+          APK=$(find build/app/outputs -name "*release*.apk" | head -1)
+          echo "APK: $APK"
+          BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
+          "$BT/apksigner" verify --print-certs "$APK" > certs.txt
+          head -3 certs.txt
+          if ! grep -qi "SHA-256 digest: $KEY_SHA256" certs.txt; then
+            echo "WRONG SIGNING KEY -- this APK would not install over the app. Stopping."
+            exit 1
+          fi
+          ls -la "$APK"
+          if [ "${{ inputs.models }}" = "true" ]; then N=HomeVoice-shorebird-full.apk; else N=HomeVoice-shorebird.apk; fi
+          cp "$APK" "$N"
+          echo "APK=$N" >> "$GITHUB_ENV"
+
+      - uses: softprops/action-gh-release@v2
+        if: inputs.step == 'release'
+        with:
+          tag_name: shorebird-${{ github.run_number }}
+          name: Shorebird release ${{ github.run_number }} (install this; patches follow)
+          files: ${{ env.APK }}
+
+      # ── patch: a small update for the newest release ──────────────────
+      - name: Patch (small update)
+        if: inputs.step == 'patch'
+        run: |
+          shorebird patch android --release-version latest --track=stable
+          echo "Patch sent. Phones download it the next time the app opens,"
+          echo "and use it from the start after that."
