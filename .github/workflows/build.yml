@@ -27,6 +27,11 @@ jobs:
     # small main one.
     env:
       GRADLE_USER_HOME: /mnt/gradle-home
+      # Where Android's build tools look for the signing key: set, so the
+      # key restored below is the one used (not a random one of its own).
+      ANDROID_USER_HOME: /home/runner/.android
+      # The key's fingerprint: every APK must carry exactly this one.
+      KEY_SHA256: f774a5aacd063d3b81d0d83023e56d208c6a2c9e8dc8693102f09cac4b2576b9
     steps:
       # GitHub's machine has little free disk; the build (Flutter, Gradle,
       # the speech models) needs more. Tools this build never uses go.
@@ -106,13 +111,16 @@ jobs:
         env:
           KEY: ${{ secrets.DEBUG_KEYSTORE_BASE64 }}
         run: |
-          if [ -n "$KEY" ]; then
-            mkdir -p ~/.android
-            echo "$KEY" | base64 -d > ~/.android/debug.keystore
-            echo "signing key restored"
-          else
-            echo "WARNING: no DEBUG_KEYSTORE_BASE64 secret -- this APK will not install over the last one"
+          if [ -z "$KEY" ]; then
+            echo "NO SIGNING KEY: add the secret DEBUG_KEYSTORE_BASE64 (Settings > Secrets and variables > Actions)."
+            echo "Without it the APK gets a random key and never installs over the last one."
+            exit 1
           fi
+          mkdir -p "$ANDROID_USER_HOME" ~/.android
+          echo "$KEY" | tr -d ' \r\n' | base64 -d > "$ANDROID_USER_HOME/debug.keystore"
+          cp "$ANDROID_USER_HOME/debug.keystore" ~/.android/debug.keystore 2>/dev/null || true
+          keytool -list -v -keystore "$ANDROID_USER_HOME/debug.keystore" -storepass android | grep -i "SHA256:" | head -1
+          echo "signing key restored"
 
       # Left-overs from the laptop (uploaded through the website, which
       # ignores .gitignore) break Gradle's cache: start clean.
@@ -145,10 +153,16 @@ jobs:
           ls -la build/app/outputs/flutter-apk/
           BT=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)
           echo "== signature =="
-          if ! "$BT/apksigner" verify --print-certs "$APK" | head -3; then
+          if ! "$BT/apksigner" verify --print-certs "$APK" > certs.txt; then
             echo "THE APK IS NOT SIGNED -- it cannot install on any phone."
             exit 1
           fi
+          head -3 certs.txt
+          if ! grep -qi "SHA-256 digest: $KEY_SHA256" certs.txt; then
+            echo "WRONG SIGNING KEY -- this APK would not install over the app. Stopping."
+            exit 1
+          fi
+          echo "signed with YOUR key: it installs over the last one"
           echo "== what it needs =="
           "$BT/aapt2" dump badging "$APK" 2>/dev/null \
             | grep -E "^package:|sdkVersion|native-code" || true
