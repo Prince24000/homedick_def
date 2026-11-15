@@ -71,29 +71,11 @@ jobs:
         with:
           cache: true
 
-      # ── init: once ─────────────────────────────────────────────────────
-      - name: Init (once)
-        if: inputs.step == 'init'
-        run: |
-          if [ -f shorebird.yaml ]; then
-            echo "shorebird.yaml is already in the repo: init was done. Run 'release' or 'patch'."
-            exit 0
-          fi
-          shorebird init --display-name "HomeVoice Defense"
-          cat shorebird.yaml
-          git config user.name "github-actions"
-          git config user.email "github-actions@users.noreply.github.com"
-          git add shorebird.yaml pubspec.yaml android/app/src/main/AndroidManifest.xml
-          git commit -m "Shorebird init: shorebird.yaml"
-          git push
-          echo "Done. Next: run the workflow again with 'release'."
-
       # ── release and patch: the same build setup as build.yml ───────────
       - name: Assets and speech model
-        if: inputs.step != 'init'
         run: |
           set -e
-          if [ ! -f shorebird.yaml ]; then
+          if [ "${{ inputs.step }}" != "init" ] && [ ! -f shorebird.yaml ]; then
             echo "Run 'init' first (shorebird.yaml is not in the repo yet)."
             exit 1
           fi
@@ -138,7 +120,6 @@ jobs:
           keytool -list -v -keystore "$ANDROID_USER_HOME/debug.keystore" -storepass android | grep -i "SHA256:" | head -1
 
       - name: Clean leftovers
-        if: inputs.step != 'init'
         run: |
           rm -rf android/.gradle android/.kotlin android/build android/app/build \
                  android/local.properties android/app/.cxx build .dart_tool
@@ -146,6 +127,39 @@ jobs:
           sed -i '/^org.gradle.jvmargs/d; /^org.gradle.workers.max/d' android/gradle.properties
           echo "org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=1g" >> android/gradle.properties
           echo "org.gradle.workers.max=2" >> android/gradle.properties
+
+      # ── init: once ─────────────────────────────────────────────────────
+      # Shorebird reads the project through android/gradlew, which a Flutter
+      # build creates and the repo does not hold: Flutter makes it first.
+      - uses: subosito/flutter-action@v2
+        if: inputs.step == 'init'
+        with:
+          channel: stable
+          flutter-version: 3.38.x
+          cache: true
+
+      - name: Init (once)
+        if: inputs.step == 'init'
+        run: |
+          if [ -f shorebird.yaml ]; then
+            echo "shorebird.yaml is already in the repo: init was done. Run 'release' or 'patch'."
+            exit 0
+          fi
+          flutter pub get
+          if [ ! -f android/gradlew ]; then
+            flutter build apk --config-only || \
+              flutter build apk --debug --target-platform android-arm64
+          fi
+          ls -la android/gradlew
+          shorebird init --display-name "HomeVoice Defense"
+          cat shorebird.yaml
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add shorebird.yaml pubspec.yaml
+          git add android/app/src/main/AndroidManifest.xml 2>/dev/null || true
+          git commit -m "Shorebird init: shorebird.yaml"
+          git push
+          echo "Done. Next: run the workflow again with 'release'."
 
       # ── release: a full APK, on the Releases page ─────────────────────
       # The newest Flutter 3.38 that Shorebird supports (3.38.1 or later):
