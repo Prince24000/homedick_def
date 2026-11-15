@@ -1,4 +1,4 @@
-/// /// AUTOMATIONS — the rules the house follows, and the blocks that build
+/// AUTOMATIONS — the rules the house follows, and the blocks that build
 /// them. ONE screen (her merge, 2026-08-27), not two.
 ///
 /// The list and the builder were separate screens for about an hour, and
@@ -227,6 +227,258 @@ class AutomationsScreen extends StatelessWidget {
                     style: TextStyle(fontSize: 11, color: s.inkFaint)),
               ]),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  void _details(BuildContext context, AppState s, Map<String, dynamic> r) {
+    final fired = (r['fired_count'] as num?)?.toInt() ?? 0;
+    final last = dayOf(r['last_fired'], time: true);
+    final who = whoLines(s, r);
+    showDetailsPanel(
+      context,
+      s,
+      title: (r['name'] ?? '').toString(),
+      tag: (r['chip'] ?? '').toString(),
+      subtitle: (r['sentence'] ?? '').toString(),
+      body: [
+        if (who.isNotEmpty) ...[
+          Divider(color: s.border, height: 1),
+          detailsHeading(s, 'WHO'),
+          ...who,
+        ],
+        detailsHeading(s, 'WHEN IT RAN'),
+        Text(
+            fired == 0
+                ? 'Never yet'
+                : [
+                    if (last.isNotEmpty) 'Last ran $last',
+                    fired == 1 ? 'once in all' : '$fired times in all',
+                  ].join(' · '),
+            style: TextStyle(fontSize: 14, color: s.ink)),
+      ],
+    );
+  }
+
+  /// Remove, behind a confirmation. Deleting a habit is not dangerous —
+  /// the devices are untouched — but it is not undoable either, and the
+  /// rule is right there to be misread.
+  Widget _menu(BuildContext context, AppState s, Map<String, dynamic> r) {
+    return PopupMenuButton<String>(
+      icon: Icon(Icons.more_vert, size: 18, color: s.inkFaint),
+      color: s.surface,
+      onSelected: (v) async {
+        if (v != 'remove') return;
+        final yes = await showDialog<bool>(
+          context: context,
+          builder: (dctx) => AlertDialog(
+            backgroundColor: s.surface,
+            title: Text('Remove ${r['name']}?',
+                style: TextStyle(color: s.ink, fontSize: 17)),
+            content: Text(
+                'The habit goes. Every device it touched is left exactly '
+                'as it is.',
+                style: TextStyle(color: s.inkDim, fontSize: 13.5)),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dctx, false),
+                child: Text('Cancel',
+                    style: TextStyle(color: s.cancelInk)),
+              ),
+              TextButton(
+                onPressed: () => Navigator.pop(dctx, true),
+                child: Text('Remove',
+                    style: TextStyle(
+                        color: s.cancelInk, fontWeight: FontWeight.w700)),
+              ),
+            ],
+          ),
+        );
+        if (yes != true) return;
+        s.removeAutomation((r['id'] ?? '').toString());
+      },
+      itemBuilder: (_) => [
+        PopupMenuItem(
+          value: 'remove',
+          child: Row(children: [
+            Icon(Icons.delete_outline, size: 16, color: s.cancelInk),
+            const SizedBox(width: 8),
+            Text('Remove', style: TextStyle(color: s.ink, fontSize: 14)),
+          ]),
+        ),
+      ],
+    );
+  }
+
+  Widget _chip(AppState s, String text) => Container(
+        margin: const EdgeInsets.only(right: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+        decoration: BoxDecoration(
+          color: s.accent.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(20),
+        ),
+        child: Text(text,
+            style: TextStyle(
+                fontSize: 10.5,
+                color: s.accent,
+                fontWeight: FontWeight.w600)),
+      );
+
+  /// What the house has actually DONE, most recent first — including what
+  /// it refused, which is the half that matters when a rule misbehaves.
+  Widget _journal(AppState s) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 12, 4, 8),
+          child: Row(children: [
+            Icon(Icons.history, size: 14, color: s.inkFaint),
+            const SizedBox(width: 6),
+            Text('RECENTLY',
+                style: TextStyle(
+                    fontSize: 11,
+                    letterSpacing: 0.09,
+                    fontWeight: FontWeight.w600,
+                    color: s.inkFaint)),
+            const SizedBox(width: 8),
+            Expanded(child: Divider(color: s.border, height: 1)),
+          ]),
+        ),
+        for (final j in s.automationJournal.take(12))
+          Padding(
+            padding: const EdgeInsets.only(bottom: 6, left: 4),
+            child: RichText(
+              text: TextSpan(children: [
+                TextSpan(
+                    text: '${j['name']}: ',
+                    style: TextStyle(
+                        fontSize: 12,
+                        color: s.inkDim,
+                        fontWeight: FontWeight.w600)),
+                TextSpan(
+                    text: (j['text'] ?? '').toString(),
+                    style: TextStyle(
+                        fontSize: 12, color: s.inkFaint, height: 1.4)),
+              ]),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+
+/// The blocks. Private to this file: the builder is not a place you go,
+/// it is what this screen looks like when there is a rule in your hands.
+class _RuleBlocks extends StatefulWidget {
+  final AppState appState;
+  const _RuleBlocks({super.key, required this.appState});
+
+  @override
+  State<_RuleBlocks> createState() => _RuleBlocksState();
+}
+
+class _RuleBlocksState extends State<_RuleBlocks> {
+  final _nameCtl = TextEditingController();
+  final _sayCtl = TextEditingController();
+
+  // WHEN
+  String? _whenDevice;
+  Map<String, dynamic>? _whenOption;
+  final _whenNumber = TextEditingController();
+  final _whenMinutes = TextEditingController(text: '5');
+  final _whenAt = TextEditingController(text: '07:00');
+  final _whenTag = TextEditingController();
+
+  /// Take the option just chosen and fill in what the hub already knows.
+  ///
+  /// ONE CASE, and it earns its place: a card UID is sixteen hex
+  /// characters nobody memorises, and until now the only place one was
+  /// ever printed was the hub's log — so "a specific card" meant reading
+  /// a log file and typing it back. The hub sends `last`, the UID that
+  /// reader saw most recently, so the flow is: tap the card, open the
+  /// builder, pick the option, and it is already there. Only when the
+  /// field is EMPTY, so it can never overwrite what somebody typed.
+  void _seed(Map<String, dynamic>? option) {
+    if (option?['needs'] == 'tag' && _whenTag.text.trim().isEmpty) {
+      _whenTag.text = (option?['last'] ?? '').toString();
+    }
+  }
+
+  /// A TIME IS NOT A DEVICE — but the WHEN block starts from one dropdown,
+  /// and that dropdown is where a person looks for "at seven". So the time
+  /// trigger rides in the device slot under a sentinel no device id can
+  /// collide with: ids are `<room>.<name>`, and neither half holds an '@'.
+  ///
+  /// The hub has understood this trigger all along (`TRIGGER_KINDS`
+  /// includes "time", validate_rule checks the HH:MM, the tick fires it
+  /// once a day). Only the app had no way in, because the block builder
+  /// replaces the console flow that offered it. Her ruling, 2026-09-01.
+  static const _kTime = '@time';
+
+  /// The single option that sentinel offers, shaped EXACTLY like the ones
+  /// the hub sends. Nothing downstream needs to know it is special: the
+  /// second dropdown lists it, `needs` opens its field, and `trigger` is
+  /// the rule the hub already validates and fires.
+  static const Map<String, dynamic> _timeOption = {
+    'label': 'at a time of day',
+    'needs': 'time',
+    'trigger': {'kind': 'time'},
+  };
+
+  // IF
+  /// The "only if"s, every one of which must hold. The first may be "no
+  /// limit"; the names below are the first one's (the voice flow uses them).
+  final List<_Limit> _ifs = [_Limit()];
+  String get _ifKind => _ifs.first.kind;
+  set _ifKind(String v) => _ifs.first.kind = v;
+  TextEditingController get _ifAfter => _ifs.first.after;
+  TextEditingController get _ifBefore => _ifs.first.before;
+  set _ifDevice(String? v) => _ifs.first.device = v;
+  set _ifEquals(bool v) => _ifs.first.equals = v;
+
+  // THEN / ELSE rows
+  final List<_ActionRow> _then = [_ActionRow()];
+  final List<_ActionRow> _else = [];
+  final List<_ActionRow> _revert = [];
+  final _revertMinutes = TextEditingController(text: '5');
+
+  /// LOOP: THEN starts again from the top after its last step, until the
+  /// automation is switched off (Arduino's loop()). Needs a Wait row.
+  bool _loop = false;
+
+  // IF I SWITCH IT MYSELF -- who wins when a person commands the device a
+  // rule drives. default = the house setting (a short window, time rules
+  // exempt); window = the person wins for [_ovValue] [_ovUnit] after their
+  // last command; always = the automation always wins. (2026-10-01)
+  String _ovMode = 'default';
+  final _ovValue = TextEditingController(text: '10');
+  String _ovUnit = 'minutes';
+
+  bool _loaded = false;
+
+  /// The trigger of the rule being edited, for the one field the blocks
+  /// cannot show: a change trigger's optional `by`. Without it an edit
+  /// silently dropped the rule's own movement threshold.
+  Map<String, dynamic>? _loadedTrigger;
+
+  @override
+  void initState() {
+    super.initState();
+    // The dock's tap fills the BLOCKS in by voice. Registered here rather
+    // than on the screen because the builder is a face of the automations
+    // screen, not a route: it appears and goes without the navigator ever
+    // hearing about it (2026-09-11).
+    widget.appState.screenVoiceRequest = _startVoice;
+  }
+
+  @override
+  void dispose() {
+    final st = widget.appState;
+    if (st.screenVoiceRequest == _startVoice) st.scr],
           ),
         ),
       ),
