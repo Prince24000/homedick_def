@@ -56,9 +56,9 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      # A Flutter that still accepts the project's Gradle (8.14): the newest
-      # one wants Gradle 9.3.1. If a later step says a package needs a newer
-      # Dart, raise this to 3.38.x.
+      # 3.38 (Dart 3.10): what the project's packages need, and it still
+      # accepts the project's Gradle (8.14). The newest Flutter wants
+      # Gradle 9.3.1, so keep this pinned.
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -131,10 +131,10 @@ jobs:
 
       - run: flutter pub get
 
-      # One APK for every phone: 64-bit ARM (most phones) and 32-bit ARM (older
-      # and budget / Android Go phones). x86_64 (emulators, almost no phones)
-      # is left out: a smaller download.
-      - run: flutter build apk --release --target-platform android-arm,android-arm64
+      # One APK for every device: 64-bit ARM (most phones), 32-bit ARM (older
+      # and budget / Android Go phones) and x86_64 (some tablets, Chromebooks,
+      # emulators such as Waydroid on a PC). Kept the same on every build.
+      - run: flutter build apk --release --target-platform android-arm,android-arm64,android-x64
 
       # Proves the APK can install before anyone downloads it: signed (an
       # unsigned APK never installs), and which Android versions and chips
