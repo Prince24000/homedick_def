@@ -69,7 +69,7 @@ class VoiceFlow {
   VoiceFlow({
     required this.socket,
     required this.mic,
-    required this.wake,
+    this.wake,
     required this.endpointer,
     required this.transcriber,
     required this.voice,
@@ -102,7 +102,7 @@ class VoiceFlow {
 
   final SocketClient socket;
   final MicCapture mic;
-  final WakeWordSpotter wake;
+  final WakeWordSpotter? wake;
   final Endpointer endpointer;
   final Transcriber transcriber;
   final Voice voice;
@@ -844,7 +844,7 @@ class VoiceFlow {
     if (!_freed) {
       _freed = true;
       unawaited(voice.stop());
-      wake.dispose();
+      wake?.dispose();
       endpointer.dispose();
       transcriber.dispose();
       denoiser?.dispose();
