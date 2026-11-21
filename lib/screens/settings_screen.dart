@@ -170,6 +170,17 @@ class SettingsScreen extends StatelessWidget {
                 gated: true,
                 onTap: () => _run(context, s, 'pair_phone'),
               ),
+              // THE SPEECH MODELS, FOR ANOTHER PHONE: copied to
+              // Download/HomeVoice models, to send. On that phone the
+              // "Add the model files" button takes them. Not gated: they
+              // are the public model files, nothing of this house.
+              _row(
+                s,
+                icon: Icons.download_outlined,
+                title: 'Copy speech models to Download',
+                enabled: true,
+                onTap: () => s.copyModelsToDownload(),
+              ),
               // THE WHOLE SECURITY GROUP IS GONE, and this screen is
               // smaller for it (her ruling, 2026-08-29).
               //

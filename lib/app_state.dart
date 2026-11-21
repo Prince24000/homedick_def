@@ -9,6 +9,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:flutter_foreground_task/flutter_foreground_task.dart';
+import 'package:file_picker/file_picker.dart';
 import 'identity.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
@@ -533,6 +534,15 @@ class AppState extends ChangeNotifier {
   bool running = false;
   bool isBooting = true;
   String? blockingProblem;
+
+  /// The speech models are not on this phone (an app built without them,
+  /// on a phone that never had them). The home screen then offers
+  /// "Download the models" and "Add the model files" (files another phone
+  /// sent); nothing downloads until the person chooses.
+  bool modelsMissing = false;
+
+  /// 0.0-1.0 while the models download; null otherwise.
+  double? modelsProgress;
   ConnState connState = ConnState.idle;
 
   // Theme. LIGHT UNTIL CHANGED: a fresh install opens light, and the
@@ -1978,8 +1988,232 @@ class AppState extends ChangeNotifier {
   /// rather than in an unhandled exception, so there is always a way back.
   Future<void> retryBoot() async {
     blockingProblem = null;
+    modelsMissing = false;
     notifyListeners();
     await _boot();
+  }
+
+  // ── THE SPEECH MODELS ──────────────────────────────────────────────
+  // Moonshine base (int8) from the sherpa-onnx project's Hugging Face
+  // mirror, one file at a time (nothing to unpack on the phone), and the
+  // voice detector from its GitHub release -- the same files the "models"
+  // build puts inside the app.
+  static const _moonshineUrl = 'https://huggingface.co/csukuangfj/'
+      'sherpa-onnx-moonshine-base-en-int8/resolve/main/';
+
+  /// Each file, and its folder under models/ ('' = models/ itself).
+  static const Map<String, String> _modelFiles = {
+    'preprocess.onnx': AppConfig.moonshineDir,
+    'encode.int8.onnx': AppConfig.moonshineDir,
+    'uncached_decode.int8.onnx': AppConfig.moonshineDir,
+    'cached_decode.int8.onnx': AppConfig.moonshineDir,
+    'tokens.txt': AppConfig.moonshineDir,
+    AppConfig.vadModel: '',
+  };
+
+  static const Map<String, String> _modelUrls = {
+    'preprocess.onnx': '${_moonshineUrl}preprocess.onnx',
+    'encode.int8.onnx': '${_moonshineUrl}encode.int8.onnx',
+    'uncached_decode.int8.onnx': '${_moonshineUrl}uncached_decode.int8.onnx',
+    'cached_decode.int8.onnx': '${_moonshineUrl}cached_decode.int8.onnx',
+    'tokens.txt': '${_moonshineUrl}tokens.txt',
+    AppConfig.vadModel: 'https://github.com/k2-fsa/sherpa-onnx/releases/'
+        'download/asr-models/silero_vad.onnx',
+  };
+
+  /// Rough sizes, for the progress bar only (about 290 MB in all).
+  static const Map<String, int> _modelBytes = {
+    'preprocess.onnx': 14100000,
+    'encode.int8.onnx': 50300000,
+    'uncached_decode.int8.onnx': 122000000,
+    'cached_decode.int8.onnx': 100000000,
+    'tokens.txt': 437000,
+    AppConfig.vadModel: 644000,
+  };
+
+  /// Bumped by each download and by "Add the model files": an older
+  /// download sees it changed and stops.
+  int _modelsRun = 0;
+
+  Future<Directory?> _modelsRoot() async {
+    final ext = await getExternalStorageDirectory();
+    return ext == null ? null : Directory('${ext.path}/models');
+  }
+
+  File _modelFile(String root, String name) {
+    final dir = _modelFiles[name]!;
+    return File(dir.isEmpty ? '$root/$name' : '$root/$dir/$name');
+  }
+
+  List<String> _missingModels(String root) => [
+        for (final name in _modelFiles.keys)
+          if (!_modelFile(root, name).existsSync() ||
+              _modelFile(root, name).lengthSync() == 0)
+            name
+      ];
+
+  /// "Download the models": fetch the missing model files. Each arrives as
+  /// `<name>.part` and is renamed when whole, so a stopped download
+  /// resumes at the file it was on. When all are in, the app starts.
+  Future<void> downloadModels() async {
+    final run = ++_modelsRun;
+    final root = await _modelsRoot();
+    if (root == null) return;
+    final missing = _missingModels(root.path);
+    final total =
+        missing.fold<int>(0, (a, name) => a + (_modelBytes[name] ?? 0));
+    var done = 0;
+    modelsProgress = 0;
+    blockingProblem = 'Downloading the speech models (about 290 MB)…\n\n'
+        'If another phone sent you the model files, you can still tap '
+        '"Add the model files" instead.';
+    notifyListeners();
+    final client = HttpClient()
+      ..connectionTimeout = const Duration(seconds: 20);
+    String? failed;
+    try {
+      for (final name in missing) {
+        final dest = _modelFile(root.path, name);
+        dest.parent.createSync(recursive: true);
+        final part = File('${dest.path}.part');
+        final req = await client.getUrl(Uri.parse(_modelUrls[name]!));
+        final res = await req.close(); // redirects are followed
+        if (res.statusCode != 200) {
+          await res.drain<void>();
+          failed = 'the server answered ${res.statusCode} for $name';
+          break;
+        }
+        final expect = res.contentLength; // -1 when not said
+        final sink = part.openWrite();
+        var got = 0;
+        try {
+          await for (final chunk in res) {
+            if (run != _modelsRun) {
+              failed = 'stopped';
+              break;
+            }
+            sink.add(chunk);
+            got += chunk.length;
+            if (total > 0) {
+              final p = ((done + got) / total).clamp(0.0, 1.0);
+              if (p - (modelsProgress ?? 0) >= 0.005) {
+                modelsProgress = p;
+                notifyListeners();
+              }
+            }
+          }
+        } finally {
+          await sink.close();
+        }
+        if (failed == null && (got == 0 || (expect >= 0 && got != expect))) {
+          failed = '$name came incomplete';
+        }
+        if (failed != null) {
+          if (part.existsSync()) part.deleteSync();
+          break;
+        }
+        if (dest.existsSync()) dest.deleteSync();
+        part.renameSync(dest.path);
+        done += _modelBytes[name] ?? got;
+      }
+    } catch (e) {
+      failed = '$e';
+    } finally {
+      client.close(force: true);
+    }
+    if (run != _modelsRun) return; // files were added by hand meanwhile
+    modelsProgress = null;
+    if (failed == null) {
+      await retryBoot();
+      return;
+    }
+    debugPrint('[models] download failed: $failed');
+    blockingProblem = 'The speech models are not on this phone yet, and '
+        'the download stopped ($failed).\n\n'
+        'Tap "Download the models" to carry on, or, if another phone sent '
+        'you the model files, tap "Add the model files" and pick them all '
+        'at once.';
+    notifyListeners();
+  }
+
+  /// "Add the model files": the files another phone sent (Settings › Copy
+  /// speech models to Download, there), copied into this app's own models
+  /// folder, which Android hides from file managers. Anything that is not
+  /// a model file is left out; whatever is still missing then downloads.
+  Future<void> addModelFiles() async {
+    FilePickerResult? result;
+    try {
+      result = await FilePicker.platform
+          .pickFiles(allowMultiple: true, type: FileType.any);
+    } catch (e) {
+      _showToast('Could not open the file picker: $e');
+      return;
+    }
+    if (result == null || result.files.isEmpty) return; // closed
+    final root = await _modelsRoot();
+    if (root == null) return;
+    _modelsRun++; // a download in progress stops
+    modelsProgress = null;
+    modelsMissing = false;
+    blockingProblem = 'Adding the model files…';
+    notifyListeners();
+    var added = 0;
+    for (final f in result.files) {
+      if (!_modelFiles.containsKey(f.name) || f.path == null) continue;
+      final out = _modelFile(root.path, f.name);
+      try {
+        out.parent.createSync(recursive: true);
+        await File(f.path!).copy(out.path);
+        added++;
+      } catch (e) {
+        debugPrint('[models] could not add ${f.name}: $e');
+      }
+    }
+    try {
+      await FilePicker.platform.clearTemporaryFiles();
+    } catch (_) {}
+    _showToast(added == 0
+        ? 'None of those were model files'
+        : 'Added $added model file${added == 1 ? '' : 's'}');
+    await retryBoot();
+  }
+
+  /// Settings › "Copy speech models to Download": this phone's model files,
+  /// side by side, in Download/HomeVoice models, a folder any file manager
+  /// shows, ready to send to another phone.
+  Future<void> copyModelsToDownload() async {
+    final root = await _modelsRoot();
+    if (root == null) return;
+    if (_missingModels(root.path).isNotEmpty) {
+      _showToast('This phone does not have all the models yet');
+      return;
+    }
+    final out = Directory('/storage/emulated/0/Download/HomeVoice models');
+    Future<void> copyAll() async {
+      out.createSync(recursive: true);
+      for (final name in _modelFiles.keys) {
+        await _modelFile(root.path, name).copy('${out.path}/$name');
+      }
+    }
+
+    _showToast('Copying the speech models (about 290 MB)…');
+    try {
+      await copyAll();
+    } catch (_) {
+      // Older Android asks for storage access first.
+      try {
+        if (!await Permission.storage.request().isGranted) {
+          _showToast('Storage access is needed to copy the models');
+          return;
+        }
+        await copyAll();
+      } catch (e) {
+        _showToast('Could not copy the models: $e');
+        return;
+      }
+    }
+    _showToast('Done: Download/HomeVoice models. Send that folder to the '
+        'other phone.');
   }
 
   /// A boot that catches EVERYTHING. `_boot` used to let a thrown
@@ -2090,18 +2324,17 @@ class AppState extends ChangeNotifier {
     notifyListeners();
     await _extractBundledModels(modelRoot);
 
-    final missing = <String>[
-      for (final p in [
-        '${AppConfig.moonshineDir}/preprocess.onnx',
-        AppConfig.vadModel,
-        '${AppConfig.kwsDir}/encoder.onnx',
-      ])
-        if (!File('${modelRoot.path}/$p').existsSync()) p
-    ];
+    // Not on this phone: the person chooses -- download them (about
+    // 290 MB) or add the files another phone sent. Nothing starts alone.
+    final missing = _missingModels(modelRoot.path);
     if (missing.isNotEmpty) {
-      blockingProblem =
-          'Models missing under ${modelRoot.path}: ${missing.join(', ')}.\n'
-          'Follow README "Models" to fetch them, then restart.';
+      modelsMissing = true;
+      final some = missing.length < _modelFiles.length;
+      blockingProblem = 'The speech models are not on this phone yet.\n\n'
+          'Tap "Download the models" (about 290 MB), or, if another phone '
+          'sent you the model files, tap "Add the model files" and pick '
+          'them all at once.'
+          '${some ? '\n\nStill needed: ${missing.join(', ')}.' : ''}';
       isBooting = false;
       notifyListeners();
       return;
@@ -2242,10 +2475,15 @@ class AppState extends ChangeNotifier {
     _flow = VoiceFlow(
       socket: _socket!,
       mic: _mic!,
-      wake: WakeWordSpotter(
-        modelDir: '$modelRoot/${AppConfig.kwsDir}',
-        keywordsFile: '$modelRoot/${AppConfig.kwsDir}/keywords.txt',
-      ),
+      // The keyword-spotter files are optional now: the wake phrase is
+      // heard by the speech model. Built only when they are on the phone.
+      wake: File('$modelRoot/${AppConfig.kwsDir}/encoder.onnx').existsSync() &&
+              File('$modelRoot/${AppConfig.kwsDir}/keywords.txt').existsSync()
+          ? WakeWordSpotter(
+              modelDir: '$modelRoot/${AppConfig.kwsDir}',
+              keywordsFile: '$modelRoot/${AppConfig.kwsDir}/keywords.txt',
+            )
+          : null,
       endpointer: Endpointer(modelPath: '$modelRoot/${AppConfig.vadModel}'),
       transcriber: Transcriber(modelDir: '$modelRoot/${AppConfig.moonshineDir}'),
       voice: _voice!,

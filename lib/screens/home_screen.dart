@@ -813,6 +813,51 @@ class _HomeScreenState extends State<HomeScreen> {
                     style: TextStyle(color: s.ink, fontSize: 15, height: 1.4),
                   ),
                   const SizedBox(height: 20),
+                  // The models downloading: how far.
+                  if (s.modelsProgress != null) ...[
+                    LinearProgressIndicator(
+                      value: s.modelsProgress,
+                      minHeight: 6,
+                      color: s.accent,
+                      backgroundColor: s.border,
+                      borderRadius: BorderRadius.circular(3),
+                    ),
+                    const SizedBox(height: 6),
+                    Text('${((s.modelsProgress ?? 0) * 100).round()}%',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: s.inkDim, fontSize: 13)),
+                    const SizedBox(height: 16),
+                  ],
+                  // Models not on this phone: download them, or pick the
+                  // files another phone sent. Nothing starts until tapped.
+                  if (s.modelsMissing && s.modelsProgress == null) ...[
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: s.accent,
+                        foregroundColor: s.accentFg,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      onPressed: () => s.downloadModels(),
+                      icon: const Icon(Icons.download_outlined, size: 20),
+                      label: const Text('Download the models',
+                          style: TextStyle(fontWeight: FontWeight.w600)),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
+                  if (s.modelsMissing) ...[
+                    FilledButton.icon(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: s.accent,
+                        foregroundColor: s.accentFg,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                      ),
+                      onPressed: () => s.addModelFiles(),
+                      icon: const Icon(Icons.file_open_outlined, size: 20),
+                      label: const Text('Add the model files',
+                          style: TextStyle(fontWeight: FontWeight.w600)),
+                    ),
+                    const SizedBox(height: 10),
+                  ],
                   // A WAY BACK IN. The problem used to sit here with no
                   // button: fix the permission, return, and nothing
                   // re-tried until the app was killed.
