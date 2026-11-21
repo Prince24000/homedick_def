@@ -830,30 +830,31 @@ class _HomeScreenState extends State<HomeScreen> {
                   ],
                   // Models not on this phone: download them, or pick the
                   // files another phone sent. Nothing starts until tapped.
+                  // No icons on these two: a patch cannot add icons the
+                  // release did not ship (the release keeps only the icons
+                  // it used), and a missing one draws as a stray symbol.
                   if (s.modelsMissing && s.modelsProgress == null) ...[
-                    FilledButton.icon(
+                    FilledButton(
                       style: FilledButton.styleFrom(
                         backgroundColor: s.accent,
                         foregroundColor: s.accentFg,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                       onPressed: () => s.downloadModels(),
-                      icon: const Icon(Icons.download_outlined, size: 20),
-                      label: const Text('Download the models',
+                      child: const Text('Download the models',
                           style: TextStyle(fontWeight: FontWeight.w600)),
                     ),
                     const SizedBox(height: 10),
                   ],
                   if (s.modelsMissing) ...[
-                    FilledButton.icon(
+                    FilledButton(
                       style: FilledButton.styleFrom(
                         backgroundColor: s.accent,
                         foregroundColor: s.accentFg,
                         padding: const EdgeInsets.symmetric(vertical: 14),
                       ),
                       onPressed: () => s.addModelFiles(),
-                      icon: const Icon(Icons.file_open_outlined, size: 20),
-                      label: const Text('Add the model files',
+                      child: const Text('Add the model files',
                           style: TextStyle(fontWeight: FontWeight.w600)),
                     ),
                     const SizedBox(height: 10),

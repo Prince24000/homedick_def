@@ -176,7 +176,8 @@ class SettingsScreen extends StatelessWidget {
               // are the public model files, nothing of this house.
               _row(
                 s,
-                icon: Icons.download_outlined,
+                // An icon the release already has (a patch cannot add one).
+                icon: Icons.copy,
                 title: 'Copy speech models to Download',
                 enabled: true,
                 onTap: () => s.copyModelsToDownload(),
