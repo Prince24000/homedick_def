@@ -203,6 +203,6 @@ jobs:
       - name: Patch (small update)
         if: inputs.step == 'patch'
         run: |
-          shorebird patch android --release-version latest --track=stable
+          shorebird patch android --allow-asset-diffs --release-version latest --track=stable
           echo "Patch sent. Phones download it the next time the app opens,"
           echo "and use it from the start after that."
