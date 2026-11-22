@@ -13,9 +13,6 @@ on:
         description: "Put the speech model inside (only for a phone that never had the app: ~430 MB instead of ~140 MB)"
         type: boolean
         default: false
-  push:
-    branches: [main, master]
-    paths-ignore: ["hub/**"]
 
 permissions:
   contents: write
