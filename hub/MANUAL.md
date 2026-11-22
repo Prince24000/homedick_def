@@ -235,7 +235,29 @@ journalctl -u homevoice -f
 
 ## 11. Pairing a phone and using the app
 
-### Building the app (APK)
+### Getting the app
+
+Download it from the app repo's Releases page (no sign-in needed while the repo is public):
+
+**https://github.com/Prince24000/homedick_def/releases**
+
+Take the newest release named **HomeVoice build N** (top of the list). Each one is built from the repo's current code, so it already has every fix.
+
+| File | Size | For |
+|---|---|---|
+| `HomeVoice.apk` | about 176 MB | The usual download; the speech models come separately (below) |
+| `HomeVoice-full.apk` | about 430 MB | The models inside. Only there when a build was run with **models** ticked (Actions → Build APK → Run workflow) |
+
+On the phone, allow "Install unknown apps" for the app you open the file with, then install. Android 8 or newer. It installs over an older copy of the app and keeps its data and models.
+
+**The models on a phone that has none** (the smaller APK on a new phone). After pairing, the app shows two buttons; nothing downloads until you choose:
+
+- **Download the models** — about 290 MB, with a progress bar. If it stops, tap it again: it carries on.
+- **Add the model files** — files sent from a phone that has them. There: Settings → **Copy speech models to Download**, then send the `HomeVoice models` folder. Here: tap the button and pick all its files at once.
+
+A phone that already has the app keeps its models when a newer build is installed over it.
+
+### Building the app yourself (APK)
 
 The app is a Flutter project. Its large speech model (Moonshine base, about 280 MB) is not sent with the project; `fetch_models.py` downloads it once. The small models (`assets/models/kws/`, `silero_vad.onnx`, `gtcrn_simple.onnx`) come with the project.
 
