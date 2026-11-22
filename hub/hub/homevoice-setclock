@@ -1,0 +1,32 @@
+#!/bin/sh
+# homevoice-setclock -- the ONE thing the hub may do as root: set the clock.
+#
+# Called by hub/hub_clock.py as `sudo -n /usr/local/bin/homevoice-setclock
+# <seconds since the epoch>`, under a sudoers line that names this file and
+# nothing else. It takes exactly one argument, refuses anything that is not
+# a run of digits, refuses a time outside 2026-2100, and runs date -u -s.
+# There is no path here to reading a file, running a command, or passing an
+# option through to date -- which is the whole reason it exists instead of
+# a sudoers rule on /usr/bin/date (see the docstring in hub_clock.py).
+set -eu
+if [ "$#" -ne 1 ]; then
+    echo "usage: homevoice-setclock <epoch-seconds>" >&2
+    exit 2
+fi
+ts="$1"
+case "$ts" in
+    ''|*[!0-9]*) echo "homevoice-setclock: not a number: $ts" >&2; exit 2 ;;
+esac
+# At most ten digits, so the comparisons below cannot overflow: an
+# out-of-range number makes `[` error out, which `if` reads as false,
+# and the bounds check would be skipped entirely.
+if [ "${#ts}" -gt 10 ]; then
+    echo "homevoice-setclock: refusing an implausible time: $ts" >&2
+    exit 3
+fi
+# 1767225600 = 2026-01-01, 4102444800 = 2100-01-01
+if [ "$ts" -lt 1767225600 ] || [ "$ts" -ge 4102444800 ]; then
+    echo "homevoice-setclock: refusing an implausible time: $ts" >&2
+    exit 3
+fi
+exec /usr/bin/date -u -s "@$ts" >/dev/null

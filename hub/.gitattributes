@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.bin binary
+*.npz binary
+hub/homevoice-setclock text eol=lf

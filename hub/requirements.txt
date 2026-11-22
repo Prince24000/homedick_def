@@ -1,0 +1,24 @@
+# Required (setup_manager.py checks these and offers to install them)
+numpy
+websockets
+sherpa-onnx
+onnxruntime
+transformers
+cryptography
+bcrypt
+filelock
+
+# Optional
+requests          # Home Assistant integration
+webcolors         # full CSS3 colour names
+jellyfish         # phonetic matching for spoken names
+soundfile         # non-WAV audio decoding
+esptool           # flashing boards over USB
+pyserial          # serial console / flashing
+paho-mqtt         # MQTT to the boards
+qrcode            # pairing QR codes
+llama-cpp-python  # optional LLM device describer
+
+# Raspberry Pi only
+gpiozero ; platform_machine == "aarch64" or platform_machine == "armv7l"
+lgpio    ; platform_machine == "aarch64" or platform_machine == "armv7l"

@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.ruff_cache/
+/models/
+/data/
+/certs/
+/configs/
+*.tmp
+/custom_drivers/
+/esp_firmware/firmware/*.bin

@@ -1,0 +1,1313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>HomeVoice — test client</title>
+<style>
+/* ── Tokens ─────────────────────────────────────────────────────────── */
+:root {
+  --bg:#0d1117; --surface:#161b22; --surface-2:#1c2430; --line:#2a3441;
+  --ink:#e6edf3; --ink-dim:#8b98a5; --ink-faint:#5c6773;
+  --accent:#58a6ff; --ok:#3fb950; --warn:#d29922; --bad:#f85149;
+  --radius:12px; --gap:14px;
+  --font:-apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+  --mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,monospace;
+}
+* { box-sizing:border-box; }
+html,body { margin:0; background:var(--bg); color:var(--ink); font-family:var(--font); }
+body {
+  max-width:560px; margin:0 auto; font-size:15px; line-height:1.45;
+  padding:16px 16px calc(16px + env(safe-area-inset-bottom));
+}
+h1 { font-size:17px; margin:0 0 4px; letter-spacing:-0.01em; }
+.sub { color:var(--ink-faint); font-size:12px; margin:0 0 var(--gap); }
+
+/* ── Cards ──────────────────────────────────────────────────────────── */
+.card {
+  background:var(--surface); border:1px solid var(--line);
+  border-radius:var(--radius); padding:14px; margin-bottom:var(--gap);
+}
+.card h2 {
+  font-size:11px; text-transform:uppercase; letter-spacing:0.09em;
+  color:var(--ink-faint); margin:0 0 10px; font-weight:600;
+}
+.card.attn { border-color:var(--accent); }
+
+/* ── Controls ───────────────────────────────────────────────────────── */
+label { display:block; font-size:12px; color:var(--ink-dim); margin-bottom:5px; }
+input[type=text], input[type=password] {
+  width:100%; padding:11px 12px; font-size:16px; /* 16px: stops iOS zoom-on-focus */
+  background:var(--bg); color:var(--ink);
+  border:1px solid var(--line); border-radius:8px; font-family:inherit;
+}
+input:focus-visible, button:focus-visible {
+  outline:2px solid var(--accent); outline-offset:2px;
+}
+.hint { font-size:12px; color:var(--ink-faint); margin:6px 0 0; }
+.row { display:flex; gap:8px; }
+.row > * { flex:1; }
+
+button {
+  font:inherit; font-size:15px; padding:11px 14px; border-radius:8px;
+  border:1px solid var(--line); background:var(--surface-2); color:var(--ink);
+  cursor:pointer; -webkit-tap-highlight-color:transparent;
+}
+button:hover:not(:disabled) { border-color:var(--ink-faint); }
+button:disabled { opacity:.38; cursor:not-allowed; }
+button.primary { background:var(--accent); border-color:var(--accent); color:#06131f; font-weight:600; }
+button.danger  { background:transparent; border-color:var(--bad); color:var(--bad); }
+button.ghost   { background:transparent; }
+
+/* ── Status ─────────────────────────────────────────────────────────── */
+.status { display:flex; align-items:center; gap:8px; font-size:13px; }
+.dot { width:8px; height:8px; border-radius:50%; background:var(--ink-faint); flex:0 0 auto; }
+.dot.ok { background:var(--ok); }
+.dot.busy { background:var(--warn); animation:blink 1.1s ease-in-out infinite; }
+.dot.bad { background:var(--bad); }
+@keyframes blink { 50% { opacity:.25; } }
+
+/* ── Alerts ─────────────────────────────────────────────────────────── */
+.alert {
+  display:flex; gap:10px; align-items:flex-start;
+  border-radius:var(--radius); padding:11px 12px; margin-bottom:var(--gap);
+  font-size:13px; border:1px solid;
+}
+.alert.info { background:#12263a; border-color:#1f4d75; color:#a9d1f5; }
+.alert.warn { background:#2b2410; border-color:#5c4a12; color:#e4c26a; }
+.alert.bad  { background:#2d1416; border-color:#6e2529; color:#f8a3a0; }
+.alert p { margin:0; flex:1; }
+.alert button { padding:2px 8px; font-size:16px; line-height:1; background:none; border:none; color:inherit; opacity:.7; }
+
+/* The one-time recovery phrase. Deliberately loud and deliberately sticky:
+   it is shown once, cannot be regenerated, and used to arrive as an ordinary
+   line in the scrolling log. */
+.keepsafe { border:2px solid var(--warn); background:#241c07; }
+.keepsafe h2 { color:var(--warn); }
+.keepsafe pre {
+  font-family:var(--mono); font-size:15px; line-height:1.7; white-space:pre-wrap;
+  word-break:break-word; margin:0 0 12px; color:#ffe9a8;
+}
+
+/* ── Push-to-talk ───────────────────────────────────────────────────── */
+.ptt {
+  width:100%; padding:20px; font-size:16px; font-weight:600;
+  display:flex; flex-direction:column; align-items:center; gap:4px;
+  touch-action:none;            /* the press must not become a scroll   */
+  user-select:none; -webkit-user-select:none;
+  -webkit-touch-callout:none;   /* long-press IS the gesture here       */
+}
+.ptt small { font-weight:400; font-size:12px; color:var(--ink-faint); }
+.ptt.live { background:var(--bad); border-color:var(--bad); color:#fff; }
+.ptt.live small { color:#ffd9d7; }
+.ptt.live::before {
+  content:""; width:10px; height:10px; border-radius:50%; background:#fff;
+  animation:blink .9s ease-in-out infinite;
+}
+@media (prefers-reduced-motion:reduce) { .dot.busy, .ptt.live::before { animation:none; } }
+
+/* ── Enrollment ─────────────────────────────────────────────────────── */
+.pips { display:flex; gap:5px; margin:0 0 12px; }
+.pip { flex:1; height:5px; border-radius:3px; background:var(--line); }
+.pip.done { background:var(--ok); }
+.pip.now  { background:var(--accent); }
+.counter { font-size:11px; letter-spacing:0.09em; color:var(--accent); text-transform:uppercase; margin-bottom:8px; }
+.phrase {
+  font-size:21px; line-height:1.4; text-align:center; padding:20px 16px;
+  background:var(--surface-2); border:1px solid var(--line);
+  border-radius:var(--radius); margin-bottom:14px;
+}
+
+/* ── Choice ─────────────────────────────────────────────────────────── */
+.opts { display:flex; flex-direction:column; gap:7px; margin-bottom:12px; }
+.opt { text-align:left; padding:13px; display:flex; align-items:center; gap:10px; }
+.opt .body { flex:1; min-width:0; }
+.opt .name { display:block; }
+.opt .meta { display:block; font-size:12px; color:var(--ink-faint); margin-top:2px; }
+.opt[aria-pressed=true] { background:#12331f; border-color:var(--ok); }
+.opt[aria-pressed=true] .meta { color:#8fd1a4; }
+.opt .tick { color:var(--ok); font-weight:700; visibility:hidden; }
+.opt[aria-pressed=true] .tick { visibility:visible; }
+
+/* ── Sidebar ────────────────────────────────────────────────────────── */
+.topbar { display:flex; align-items:center; gap:10px; margin-bottom:4px; }
+.topbar h1 { flex:1; margin:0; }
+#menuToggle {
+  flex:0 0 auto; padding:8px 11px; font-size:15px; line-height:1;
+  display:flex; align-items:center; gap:7px;
+}
+#menuToggle .bars { display:inline-flex; flex-direction:column; gap:3px; }
+#menuToggle .bars i { display:block; width:15px; height:2px; background:currentColor; }
+
+#backdrop {
+  position:fixed; inset:0; background:rgba(0,0,0,.55); z-index:20;
+  opacity:0; transition:opacity .18s ease;
+}
+#backdrop.open { opacity:1; }
+
+#sidebar {
+  position:fixed; top:0; left:0; bottom:0; width:min(310px, 84vw); z-index:21;
+  background:var(--surface); border-right:1px solid var(--line);
+  padding:16px 14px calc(16px + env(safe-area-inset-bottom));
+  overflow-y:auto; transform:translateX(-102%); transition:transform .18s ease;
+  display:flex; flex-direction:column; gap:6px;
+}
+#sidebar.open { transform:none; }
+@media (prefers-reduced-motion:reduce) {
+  #sidebar, #backdrop { transition:none; }
+}
+#sidebar header { display:flex; align-items:center; gap:8px; margin-bottom:6px; }
+#sidebar header h2 { flex:1; margin:0; font-size:13px; color:var(--ink); letter-spacing:0; }
+#sidebar .group {
+  font-size:11px; text-transform:uppercase; letter-spacing:.09em;
+  color:var(--ink-faint); font-weight:600; margin:12px 0 2px;
+}
+#sidebar button.act {
+  width:100%; text-align:left; padding:11px 12px; display:flex;
+  align-items:center; gap:9px; background:transparent; border-color:transparent;
+}
+#sidebar button.act:hover:not(:disabled) { background:var(--surface-2); border-color:var(--line); }
+#sidebar button.act .gated {
+  margin-left:auto; font-size:10.5px; color:var(--warn); letter-spacing:.04em;
+  border:1px solid currentColor; border-radius:4px; padding:1px 5px;
+}
+#sidebar .foot { margin-top:auto; padding-top:14px; font-size:12px; color:var(--ink-faint); }
+#sidebarClose { padding:4px 9px; font-size:17px; line-height:1; background:none; border:none; color:var(--ink-dim); }
+
+/* ── Server messages ────────────────────────────────────────────────── */
+#messages { display:flex; flex-direction:column; gap:6px; max-height:300px; overflow-y:auto; }
+#messages p {
+  margin:0; font-size:13.5px; color:var(--ink-dim);
+  padding-left:10px; border-left:2px solid var(--line); white-space:pre-wrap;
+}
+#messages p:last-child { color:var(--ink); border-left-color:var(--accent); }
+
+/* ── Log ────────────────────────────────────────────────────────────── */
+details.log summary {
+  font-size:11px; text-transform:uppercase; letter-spacing:0.09em;
+  color:var(--ink-faint); cursor:pointer; font-weight:600;
+}
+#log {
+  font-family:var(--mono); font-size:11.5px; line-height:1.55;
+  height:220px; overflow-y:auto; margin-top:10px; padding:9px;
+  background:var(--bg); border:1px solid var(--line); border-radius:8px;
+  white-space:pre-wrap; word-break:break-word; color:var(--ink-dim);
+}
+[hidden] { display:none !important; }
+.sr {
+  position:absolute; width:1px; height:1px; overflow:hidden;
+  clip:rect(0 0 0 0); clip-path:inset(50%); white-space:nowrap;
+}
+</style>
+</head>
+<body>
+
+<div id="backdrop" hidden></div>
+
+<!-- Management lives behind a panel rather than on the main screen: these are
+     occasional, deliberate actions, and the screen you use every day should be
+     the microphone. -->
+<nav id="sidebar" hidden role="dialog" aria-modal="true" aria-label="Manage">
+  <header>
+    <h2>Manage</h2>
+    <button id="sidebarClose" type="button" aria-label="Close menu">&times;</button>
+  </header>
+
+  <div class="group">Devices</div>
+  <button class="act" type="button" data-action="list_devices">List devices</button>
+  <button class="act" type="button" data-action="add_device">Add device<span class="gated">PIN</span></button>
+  <button class="act" type="button" data-action="update_device">Update device<span class="gated">PIN</span></button>
+  <button class="act" type="button" data-action="remove_device">Remove device<span class="gated">PIN</span></button>
+
+  <div class="group">Scenes</div>
+  <button class="act" type="button" data-action="list_scenes">List scenes</button>
+  <button class="act" type="button" data-action="add_scene">Add scene<span class="gated">PIN</span></button>
+  <button class="act" type="button" data-action="remove_scene">Remove scene<span class="gated">PIN</span></button>
+
+  <div class="group">System</div>
+  <button class="act" type="button" data-action="readings">Sensor readings</button>
+  <button class="act" type="button" data-action="enroll_voice">Enroll a voice<span class="gated">PIN</span></button>
+  <button class="act" type="button" data-action="set_pin">Set PIN<span class="gated">PIN</span></button>
+  <button class="act" type="button" data-action="forgot_pin">Forgot PIN</button>
+  <button class="act" type="button" data-action="learn_ir">Learn IR codes<span class="gated">PIN</span></button>
+
+  <p class="foot" id="sidebarFoot"></p>
+</nav>
+
+<div class="topbar">
+    <button id="menuToggle" type="button" aria-expanded="false" aria-controls="sidebar">
+    <span class="bars" aria-hidden="true"><i></i><i></i><i></i></span>Manage
+  </button>
+</div>
+<p class="sub">
+  Transcription uses the browser's speech recognition (Chrome sends audio to
+  Google). Test client only.
+</p>
+
+<div id="alerts" role="status" aria-live="polite"></div>
+
+<!-- One-time secrets. Outside the views: it can arrive on any screen. -->
+<section class="card keepsafe" id="keepsafe" hidden>
+  <h2>Write this down now</h2>
+  <pre id="keepsafeText"></pre>
+  <button class="primary" id="keepsafeAck">I've written it down</button>
+</section>
+
+<section class="card">
+  <h2>Connection</h2>
+  <label for="secret">Shared HMAC secret</label>
+  <input type="password" id="secret" autocomplete="off" autocapitalize="off"
+         spellcheck="false" placeholder="paste the secret">
+  <p class="hint">Needed only to pair this page. Held in memory only, never stored, never sent — it signs the server's nonce locally. Pairing gives the page its own key (also memory only), which signs every later connection; reloading the page pairs again.</p>
+  <div class="row" style="margin-top:12px">
+    <button class="primary" id="connect">Connect</button>
+    <button class="danger" id="disconnect" disabled>Disconnect</button>
+  </div>
+  <div class="status" style="margin-top:12px">
+    <span class="dot" id="dot"></span><span id="statusText">Disconnected</span>
+  </div>
+</section>
+
+<!-- What the server SAYS, as opposed to what it asks. This is the primary
+     output channel of the whole system -- option lists, room listings, the
+     reason a check failed -- and burying it in a collapsed monospace log
+     meant the explanation for a stuck screen was one nobody would find. -->
+<section class="card" id="messagesCard" hidden>
+  <h2>Server</h2>
+  <div id="messages" role="log" aria-live="polite"></div>
+</section>
+
+<!-- Questions live outside both views: a prompt or a pick can arrive on any
+     screen, and burying them in one meant .view{display:none} hid the
+     question the server was blocked on. -->
+<section class="card attn" id="promptCard" hidden>
+  <h2>The server is asking</h2>
+  <p id="promptText" style="margin:0 0 10px"></p>
+  <label class="sr" for="promptInput">Answer</label>
+  <input type="text" id="promptInput" autocomplete="off">
+  <div class="row" style="margin-top:10px">
+    <button class="primary" id="promptSend">Reply</button>
+  </div>
+</section>
+
+<section class="card attn" id="choiceCard" hidden>
+  <h2>Choose</h2>
+  <p id="choiceText" style="margin:0 0 10px"></p>
+  <div class="opts" id="choiceOpts"></div>
+  <div class="row">
+    <button class="primary" id="choiceSend" hidden>Send selection</button>
+    <button class="ghost" id="choiceCancel">Cancel</button>
+  </div>
+</section>
+
+<!-- ── Enrollment view ─────────────────────────────────────────────── -->
+<section class="card" id="viewEnroll" hidden>
+  <h2>Voice enrollment</h2>
+
+  <div id="enrollIdle">
+    <p style="margin:0 0 12px" id="enrollIdleText">A voice must be enrolled before commands can be used.</p>
+    <button class="primary" id="enrollStart" style="width:100%">Start enrollment</button>
+  </div>
+
+  <div id="enrollActive" hidden>
+    <div class="counter" id="enrollCounter"></div>
+    <div class="pips" id="enrollPips"></div>
+    <div class="phrase" id="enrollPhrase"></div>
+    <button class="primary ptt" id="enrollPtt">
+      <span id="enrollPttLabel">Hold to record</span>
+      <small id="enrollPttHint">or hold Space</small>
+    </button>
+    <button class="ghost" id="enrollCancel" style="width:100%; margin-top:8px">Cancel enrollment</button>
+  </div>
+
+  <p class="hint">
+    Recorded on this device, through the microphone and encoding your commands
+    use. A voiceprint enrolled elsewhere never quite matches the one talking.
+  </p>
+</section>
+
+<!-- ── Command view ───────────────────────────────────────────────── -->
+<section class="card" id="viewCommand">
+  <h2 id="commandHeading">Speak a command</h2>
+
+  <div class="phrase" id="sayThis" hidden></div>
+
+  <button class="primary ptt" id="ptt" disabled>
+    <span id="pttLabel">Hold to talk</span>
+    <small id="pttHint">or hold Space</small>
+  </button>
+
+  <div id="commandCompose">
+    <label for="transcript" style="margin-top:14px">Transcript — edit before sending</label>
+    <input type="text" id="transcript" autocomplete="off"
+           placeholder="fills in after you talk, or type here">
+    <p class="hint" id="clipInfo" hidden></p>
+    <div class="row" style="margin-top:10px">
+      <button class="primary" id="send" disabled>Send command</button>
+      <button class="ghost" id="clearClip" hidden>Discard clip</button>
+    </div>
+  </div>
+</section>
+
+<details class="log card">
+  <summary>Log</summary>
+  <div id="log"></div>
+</details>
+
+<script>
+// Wrapped: every helper below would otherwise land on `window`, where a
+// name collision with a future script (or an extension) is silent.
+(function () {
+"use strict";
+
+// Substituted by the server from config.WS_PORT. The fallback exists only for
+// opening this file straight off disk: the HTTPS port and the WebSocket port
+// are independent, so the page must never hardcode one.
+// The ADDRESS is location.hostname -- whichever of this machine's names the
+// person actually typed. The server cannot know that: it has a config name
+// (the tailnet), and a bound IP (100.x for the tailnet, 192.168.x for an
+// access point), and the right answer is neither. Reaching for either one
+// produced a page that dialled an unreachable network, or one whose address
+// did not match the TLS certificate.
+//
+// The PORT does come from the server, because the HTTPS port and the socket
+// port are independent and the page must not assume they are related. The
+// digits test tolerates an un-substituted token -- opening this file straight
+// off disk, say -- by falling back to the default.
+const WS_PORT_TEMPLATE = "__WS_PORT__";
+const WS_PORT = /^\d+$/.test(WS_PORT_TEMPLATE) ? WS_PORT_TEMPLATE : "8765";
+const WS_URL = `wss://${location.hostname}:${WS_PORT}`;
+
+// The fingerprint of the certificate this page was served with, substituted
+// by the server. Every proof the hub accepts covers it
+// (nonce:timestamp:spki -- phones.signed_message), and JavaScript cannot read
+// the certificate itself. Empty when the page did not come from the hub.
+const HUB_SPKI_TEMPLATE = "__HUB_SPKI__";
+const HUB_SPKI = /^[0-9a-f]{64}$/.test(HUB_SPKI_TEMPLATE) ? HUB_SPKI_TEMPLATE : "";
+
+const $ = (id) => document.getElementById(id);
+const LOG_MAX_LINES = 400;
+
+/* ── State ───────────────────────────────────────────────────────────
+   ONE object. Every mutation ends in render(), and render() derives the
+   entire UI from it.
+
+   The previous client kept the same facts in four places -- a `busy` flag
+   recomputed by a function that eleven call sites had to remember to call, a
+   `recordRequest` variable, the visibility of individual elements, and the
+   disabled attributes themselves. They drifted: answering a pick cleared the
+   question but never re-enabled the buttons, and cancelling enrollment left a
+   screen identical to not having cancelled. Deriving is the fix; there is no
+   longer anywhere for two copies of one fact to disagree. */
+const S = {
+  conn: "idle",        // idle | connecting | authenticating | ready
+  view: "command",     // command | enroll
+  pending: null,       // null | {kind:"prompt"|"choice"|"record", ...}
+  challenge: null,     // phrase the server wants said back, or null
+  capture: "idle",     // idle | recording | encoding
+  starting: false,     // enrollment start requested, nothing back yet
+  transcript: "",
+  clip: null,          // {b64, seconds} awaiting a Send
+  menuOpen: false,
+};
+
+let ws = null;
+let startTimer = null;
+// THE HUB'S TWO WAYS IN. The shared secret's HMAC buys an ENROLLMENT session
+// only -- one `pair` frame, then the hub hangs up. A full session needs a
+// keypair the hub has registered, signing the challenge. So the page pairs
+// once (a fresh Ed25519 key, memory only) and reconnects signing with it.
+let identity = null;             // {phoneId, privateKey, spki} once paired
+let pendingKey = null;           // the keypair offered in the pair frame
+let reconnectAfterClose = false; // pair_ok: the hub closes, we come back signed
+
+/* ── Logging & alerts ────────────────────────────────────────────── */
+
+function log(line) {
+  const el = $("log");
+  // Auto-scroll ONLY when already at the bottom, so reading back through the
+  // log isn't yanked away by every arriving frame.
+  const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+  el.textContent += `${new Date().toLocaleTimeString()}  ${line}\n`;
+  const lines = el.textContent.split("\n");
+  if (lines.length > LOG_MAX_LINES) {
+    el.textContent = lines.slice(lines.length - LOG_MAX_LINES).join("\n");
+  }
+  if (atBottom) el.scrollTop = el.scrollHeight;
+}
+
+/* Anything the person needs to KNOW goes here, not only to the log. A
+   monospace pane behind a <details> is not where you tell someone their
+   microphone was denied. */
+function alertUser(level, text) {
+  log(`${level.toUpperCase()}: ${text}`);
+  const box = document.createElement("div");
+  box.className = `alert ${level}`;
+  const p = document.createElement("p");
+  p.textContent = text;
+  const x = document.createElement("button");
+  x.type = "button";
+  x.setAttribute("aria-label", "Dismiss");
+  x.textContent = "\u00d7";
+  x.onclick = () => box.remove();
+  box.append(p, x);
+  $("alerts").prepend(box);
+  while ($("alerts").childElementCount > 3) $("alerts").lastElementChild.remove();
+}
+
+const clearAlerts = () => ($("alerts").textContent = "");
+
+/* ── Render ──────────────────────────────────────────────────────── */
+
+const ready = () => S.conn === "ready";
+const idle  = () => S.capture === "idle";
+
+/* What would a press of the command-view record button be FOR right now?
+   null means "not a recording moment". A record_required whose context is not
+   enrollment stays on this screen -- and used to disable the only button able
+   to answer it, leaving the server blocked on a recording the user could not
+   physically make. */
+function commandRole() {
+  if (S.pending && S.pending.kind === "record" && S.pending.context !== "enrollment") return "record";
+  if (S.challenge) return "challenge";
+  if (!S.pending) return "command";
+  return null;
+}
+
+const enrollRole = () =>
+  S.pending && S.pending.kind === "record" && S.pending.context === "enrollment";
+
+function render() {
+  const conn = { idle:["", "Disconnected"], connecting:["busy","Connecting\u2026"],
+                 authenticating:["busy","Authenticating\u2026"], ready:["ok","Connected"] }[S.conn];
+  $("dot").className = `dot ${conn[0]}`;
+  $("statusText").textContent = conn[1];
+  $("connect").disabled = S.conn === "connecting" || S.conn === "authenticating";
+  $("disconnect").disabled = S.conn === "idle";
+
+  $("viewEnroll").hidden = S.view !== "enroll";
+  $("viewCommand").hidden = S.view !== "command";
+
+  // Enrollment. Derived, never wiped: switching views does not clear where
+  // the flow had got to, so a stray view frame can't strand the screen.
+  const req = enrollRole() ? S.pending : null;
+  $("enrollIdle").hidden = !!req;
+  $("enrollActive").hidden = !req;
+  // Three states, not two. While enrollment is mid-flow but asking something
+  // OTHER than a recording (the user id, "try again?"), offering a greyed-out
+  // "Start enrollment" reads as broken -- the flow is running, it just wants
+  // an answer from the card below.
+  const asking = !req && S.pending !== null;
+  $("enrollIdleText").textContent = asking
+    ? "Enrollment is running \u2014 answer the question below."
+    : "A voice must be enrolled before commands can be used.";
+  $("enrollStart").hidden = asking;
+  if (req) {
+    $("enrollPhrase").textContent = req.phrase || "";
+    const { index:i, total:n } = req;
+    $("enrollCounter").textContent =
+      (i && n) ? `Phrase ${i} of ${n}` : (i ? `Phrase ${i}` : "Recording");
+    const pips = $("enrollPips");
+    pips.hidden = !n;
+    if (n && pips.childElementCount !== n) {
+      pips.textContent = "";
+      for (let k = 0; k < n; k++) pips.append(document.createElement("div"));
+    }
+    [...pips.children].forEach((p, k) => {
+      p.className = "pip" + (k + 1 < i ? " done" : k + 1 === i ? " now" : "");
+    });
+  }
+  $("enrollStart").disabled = !ready() || S.starting;
+  $("enrollStart").textContent = S.starting ? "Starting\u2026" : "Start enrollment";
+  paintPtt($("enrollPtt"), $("enrollPttLabel"), $("enrollPttHint"),
+           !!req && ready() && idle(), "Hold to record");
+  $("enrollCancel").disabled = !ready() || !idle();
+
+  // Command view.
+  const role = commandRole();
+  $("sayThis").hidden = !S.challenge && role !== "record";
+  $("sayThis").textContent = S.challenge || (S.pending && S.pending.phrase) || "";
+  $("commandHeading").textContent =
+    S.challenge ? "Say the phrase above" :
+    role === "record" ? "A recording is needed" : "Speak a command";
+  paintPtt($("ptt"), $("pttLabel"), $("pttHint"), role !== null && ready() && idle(),
+           role === "command" ? "Hold to talk" : "Hold to record");
+
+  // Compose row is for commands only: a challenge and a record_required are
+  // audio-only and submit themselves, so there is no text to review.
+  $("commandCompose").hidden = role !== "command";
+  if ($("transcript").value !== S.transcript) $("transcript").value = S.transcript;
+  $("clipInfo").hidden = !S.clip;
+  $("clearClip").hidden = !S.clip;
+  if (S.clip) $("clipInfo").textContent = `Clip attached — ${S.clip.seconds.toFixed(1)}s`;
+  $("send").disabled = !(ready() && idle() && role === "command" &&
+                         (S.transcript.trim() || S.clip));
+
+  $("promptCard").hidden = !(S.pending && S.pending.kind === "prompt");
+  $("choiceCard").hidden = !(S.pending && S.pending.kind === "choice");
+
+  // The server runs ONE thing at a time, so a management action cannot start
+  // while a command or a question is in flight. Disabling here is what stops
+  // the user discovering that as a "busy" rejection.
+  const canManage = ready() && idle() && S.pending === null && !S.starting;
+  for (const b of document.querySelectorAll("#sidebar button.act")) b.disabled = !canManage;
+  $("sidebarFoot").textContent = canManage
+    ? "Actions marked PIN will ask for your PIN first."
+    : (ready() ? "Busy — finish what's on screen first." : "Connect first.");
+  $("menuToggle").disabled = !ready();
+  $("menuToggle").setAttribute("aria-expanded", String(S.menuOpen));
+  $("sidebar").hidden = false;
+  $("sidebar").classList.toggle("open", S.menuOpen);
+  $("backdrop").hidden = !S.menuOpen;
+  $("backdrop").classList.toggle("open", S.menuOpen);
+}
+
+function paintPtt(btn, label, hint, enabled, restLabel) {
+  const mine = !!activeSession && activeSession.button === btn;
+  const live = mine && S.capture === "recording";
+  const working = mine && S.capture === "encoding";
+  btn.disabled = !enabled && !live;
+  btn.classList.toggle("live", live);
+  btn.setAttribute("aria-pressed", String(live));
+  label.textContent = live ? "Recording\u2026" : working ? "Preparing\u2026" : restLabel;
+  hint.textContent = live ? "release to stop" : working ? "please wait" : "or hold Space";
+}
+
+/* ── Socket ──────────────────────────────────────────────────────── */
+
+function toHex(buf) {
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// The one string both proofs cover: phones.signed_message on the hub.
+const signedMessage = (nonce, timestamp, spki) => `${nonce}:${timestamp}:${spki}`;
+
+async function signNonce(secret, message) {
+  const enc = new TextEncoder();
+  const key = await crypto.subtle.importKey(
+    "raw", enc.encode(secret), { name:"HMAC", hash:"SHA-256" }, false, ["sign"]);
+  return toHex(await crypto.subtle.sign("HMAC", key, enc.encode(message)));
+}
+
+async function signWithKey(privateKey, message) {
+  return base64(await crypto.subtle.sign({ name:"Ed25519" }, privateKey,
+                                         new TextEncoder().encode(message)));
+}
+
+async function sendPairFrame() {
+  try {
+    pendingKey = await crypto.subtle.generateKey({ name:"Ed25519" }, false, ["sign", "verify"]);
+    const raw = await crypto.subtle.exportKey("raw", pendingKey.publicKey);
+    const device = (navigator.userAgentData && navigator.userAgentData.platform)
+      || navigator.platform || "browser";
+    if (!sendJson({ type:"pair", public_key:base64(raw), name:"Browser test client",
+                    device:`${device} browser` })) return;
+    log("-> pair (a new key for this page)");
+  } catch (e) {
+    pendingKey = null;
+    alertUser("bad", `This browser cannot make an Ed25519 key (${e.message}) — use a current Chrome, Firefox or Safari.`);
+    teardown();
+  }
+}
+
+function connect() {
+  const secret = $("secret").value;
+  if (!secret && !identity) return alertUser("warn", "Enter the shared secret first — this page has to pair with the hub before it can connect.");
+  if (!window.isSecureContext || !crypto.subtle) {
+    return alertUser("bad", "WebCrypto is unavailable. Serve this page over HTTPS (or localhost).");
+  }
+  teardown();
+  clearAlerts();
+  S.conn = "connecting"; render();
+  log(`connecting to ${WS_URL}`);
+  // Every handler checks it still belongs to the CURRENT socket: connect()
+  // closes the previous one, and that socket's late onclose used to run
+  // teardown() on the connection that had just replaced it.
+  const sock = new WebSocket(WS_URL);
+  ws = sock;
+  sock.onopen = () => { if (ws !== sock) return; S.conn = "authenticating"; render(); log("socket open, awaiting challenge"); };
+  // The browser deliberately withholds WebSocket failure reasons from JS --
+  // a rejected handshake, an untrusted certificate and an unreachable host
+  // all arrive here as the same contentless event. So this cannot say WHICH,
+  // and pretending otherwise would send someone checking the wrong thing.
+  // What it CAN do is name the address it tried, which is the one part the
+  // page knows and the commonest thing to be wrong.
+  sock.onerror = () => {
+    if (ws !== sock) return;
+    log(`socket error on ${WS_URL}`);
+    alertUser("bad", `Could not open ${WS_URL} — the browser will not say why. ` +
+                     `Check the server log: it records every handshake and the ` +
+                     `reason it refused one.`);
+  };
+  sock.onclose = () => {
+    if (ws !== sock) return;
+    // FULL reset. Clearing only the status left pending/starting set, so a
+    // reconnect that did not go through the button inherited a locked UI.
+    const wasReady = S.conn === "ready";
+    const again = reconnectAfterClose;
+    teardown();
+    log("disconnected");
+    if (again) { log("paired — reconnecting with this page's key"); connect(); return; }
+    if (wasReady) alertUser("warn", "Disconnected.");
+  };
+  sock.onmessage = (e) => {
+    if (ws !== sock) return;
+    let msg;
+    try { msg = JSON.parse(e.data); }
+    catch { return log(`recv non-JSON: ${String(e.data).slice(0, 120)}`); }
+    handle(msg).catch(err => alertUser("bad", `Client error: ${err.message}`));
+  };
+}
+
+/* Reset everything that is not the socket itself. */
+function teardown() {
+  abortCapture();
+  if (ws) { try { ws.close(); } catch {} ws = null; }
+  if (startTimer) { clearTimeout(startTimer); startTimer = null; }
+  pendingKey = null;
+  reconnectAfterClose = false;   // onclose reads it BEFORE calling teardown
+  S.conn = "idle"; S.view = "command"; S.pending = null; S.challenge = null;
+  S.starting = false; S.transcript = ""; S.clip = null;
+  $("choiceOpts").textContent = "";
+  $("messages").textContent = "";
+  $("messagesCard").hidden = true;
+  render();
+}
+
+function sendJson(obj) {
+  if (!ws || ws.readyState !== WebSocket.OPEN) {
+    alertUser("warn", "Not connected.");
+    return false;
+  }
+  ws.send(JSON.stringify(obj));
+  return true;
+}
+
+/* Anything the server sends that ends a question also ends `starting`. The
+   old client disabled its start button and re-enabled it only on a view
+   frame, so any other reply left the enrollment screen a dead end. */
+function settleStarting() {
+  S.starting = false;
+  if (startTimer) { clearTimeout(startTimer); startTimer = null; }
+}
+
+/* ...and `starting` is always released: by the server's reply, or by this
+   timeout if nothing comes -- the button can't stick. */
+function awaitServer(what, ms) {
+  S.starting = true;
+  startTimer = setTimeout(() => {
+    if (!S.starting) return;
+    settleStarting();
+    alertUser("warn", `No response to ${what} — try again.`);
+    render();
+  }, ms);
+  render();
+}
+
+const describe = (m) => m.text || m.reason || "no detail given";
+
+async function handle(msg) {
+  log(`<- ${JSON.stringify(msg).slice(0, 220)}`);
+  // render() in a finally: a frame handler that throws part-way used to skip
+  // the render entirely, leaving the UI frozen showing the PREVIOUS state
+  // while the server moved on.
+  try { await route(msg); } finally { render(); }
+}
+
+async function route(msg) {
+  switch (msg.type) {
+    case "auth_challenge": {
+      const nonce = msg.nonce;
+      const timestamp = Math.floor(Date.now() / 1000);
+      let frame;
+      try {
+        if (identity) {
+          // A paired page: its own key, over the certificate the hub
+          // returned at pairing.
+          frame = { type:"auth", timestamp, phone_id:identity.phoneId,
+                    signature:await signWithKey(identity.privateKey,
+                                                signedMessage(nonce, timestamp, identity.spki)) };
+        } else {
+          const secret = $("secret").value;
+          if (!secret) { alertUser("bad", "No secret entered — cannot answer the challenge."); return teardown(); }
+          if (!HUB_SPKI) {
+            alertUser("bad", "This page does not know the hub's certificate fingerprint — open it from the hub itself (https://<hub>:8443/), not from a file.");
+            return teardown();
+          }
+          frame = { type:"auth", timestamp,
+                    hmac:await signNonce(secret, signedMessage(nonce, timestamp, HUB_SPKI)) };
+        }
+      } catch (e) { alertUser("bad", `Could not sign the nonce: ${e.message}`); return teardown(); }
+      if (ws && ws.readyState === WebSocket.OPEN) {   // may have closed while signing
+        sendJson(frame);
+        log(identity ? "signed auth frame sent" : "pairing auth frame sent");
+      }
+      break;
+    }
+
+    case "auth_ok":
+      if (msg.mode === "enroll") {
+        // Proven the shared secret: this session may register a key, nothing else.
+        log("secret accepted — pairing this page");
+        await sendPairFrame();
+        break;
+      }
+      S.conn = "ready";
+      log("authenticated");
+      break;
+
+    case "pair_ok":
+      if (!pendingKey) { log("pair_ok with no key offered — ignored"); break; }
+      identity = { phoneId:msg.phone_id, privateKey:pendingKey.privateKey, spki:msg.spki || HUB_SPKI };
+      pendingKey = null;
+      reconnectAfterClose = true;      // the hub hangs up after pair_ok
+      log(`paired as ${msg.fingerprint || msg.phone_id}`);
+      break;
+
+    case "pair_failed":
+      pendingKey = null;
+      alertUser("bad", `Pairing refused: ${describe(msg)}`);
+      teardown();
+      return;
+
+    case "auth_failed":
+      // A key the hub no longer knows (revoked, or the registry was reset)
+      // is dropped, so the next Connect pairs afresh with the secret.
+      if (identity && (msg.reason === "bad_signature" || msg.reason === "revoked")) identity = null;
+      alertUser("bad", `Authentication failed: ${describe(msg)}`);
+      teardown();
+      return;
+
+    case "still_there":
+      alertUser("warn", "The hub is asking whether you are still there — answer the question on screen, or it will be cancelled.");
+      break;
+
+    case "view":
+      // The SERVER owns which screen is showing; the client never infers it
+      // from traffic. Switching does not touch flow state.
+      S.view = msg.name === "enroll" ? "enroll" : "command";
+      settleStarting();
+      break;
+
+    case "record_required":
+      settleStarting();
+      S.pending = { kind:"record", phrase:msg.phrase || "", context:msg.context || "recording",
+                    index:msg.index || 0, total:msg.total || 0 };
+      // Put the request on a screen that can answer it. Enrollment has its
+      // own; everything else lives on the command view, and leaving a stale
+      // "enroll" view showing would hide the phrase AND the record button.
+      S.view = S.pending.context === "enrollment" ? "enroll" : "command";
+      S.clip = null;
+      break;
+
+    case "challenge_required":
+      S.challenge = msg.phrase || "";
+      S.clip = null;
+      alertUser("info", "Voice check: say the phrase shown, then release.");
+      break;
+
+    case "prompt":
+      settleStarting();
+      S.pending = { kind:"prompt" };
+      $("promptText").textContent = msg.text || "";
+      $("promptInput").value = "";
+      break;
+
+    case "choice":
+      settleStarting();
+      buildChoice(msg);
+      break;
+
+    case "output":
+      if (msg.level === "important") showKeepsafe(msg.text || "");
+      else if (msg.level === "warn") alertUser("warn", msg.text || "");
+      else showMessage(msg.text || "");
+      break;
+
+    case "result": {
+      // Pressing "Start enrollment" sends an empty command frame precisely so
+      // the server's reader gate starts enrollment; the not_enrolled refusal
+      // that comes back is the handshake working, not something to warn about.
+      const expected = S.starting && msg.reason === "not_enrolled";
+      settleStarting();
+      S.challenge = null;
+      if (msg.ok) log("command completed");
+      else if (expected) log("enrollment requested");
+      else alertUser("warn", `Command did not complete: ${describe(msg)}`);
+      // Deliberately NOT clearing S.pending: a result for one request must
+      // not close another request's outstanding question. A refused command
+      // arrives WHILE enrollment is still asking for a user id, and deleting
+      // that question left the server blocked with nothing able to answer it.
+      break;
+    }
+
+    case "error":
+      settleStarting();
+      alertUser("bad", describe(msg));
+      break;
+
+    default:
+      log(`unhandled frame type: ${msg.type}`);
+  }
+}
+
+/* Show an element and bring it into view. scrollIntoView is optional in some
+   engines, and letting a missing one throw took the whole frame handler with
+   it -- the card appeared but nothing after it ran. */
+function reveal(el, block) {
+  el.hidden = false;
+  try { el.scrollIntoView?.({ block, behavior:"smooth" }); } catch {}
+}
+
+// Room for a device listing. The server sends one output frame per row, and
+// a list of twenty devices used to push its own first half out of a panel that
+// kept eight.
+const MESSAGES_KEPT = 60;
+
+function showMessage(text) {
+  log(`   ${text}`);
+  const trimmed = text.replace(/^\s*[\n]+|[\n]+\s*$/g, "");
+  if (!trimmed.trim()) return;             // spacers and rules: log only
+  const box = $("messages");
+  const p = document.createElement("p");
+  p.textContent = trimmed;
+  box.append(p);
+  while (box.childElementCount > MESSAGES_KEPT) box.firstElementChild.remove();
+  $("messagesCard").hidden = false;
+  box.scrollTop = box.scrollHeight;
+}
+
+function showKeepsafe(text) {
+  $("keepsafeText").textContent = text;
+  reveal($("keepsafe"), "center");
+}
+$("keepsafeAck").onclick = () => { $("keepsafe").hidden = true; };
+
+/* ── Choice ──────────────────────────────────────────────────────── */
+
+function buildChoice(msg) {
+  const options = Array.isArray(msg.options) ? msg.options : [];
+  S.pending = { kind:"choice", multi:!!msg.multi, allowAll:!!msg.allow_all,
+                values:options.map(o => o.value), selected:new Set() };
+
+  $("choiceText").textContent = msg.text || "Pick one:";
+  const box = $("choiceOpts");
+  box.textContent = "";
+
+  for (const opt of options) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "opt";
+    b.setAttribute("aria-pressed", "false");
+
+    const tick = document.createElement("span");
+    tick.className = "tick"; tick.textContent = "\u2713"; tick.setAttribute("aria-hidden", "true");
+    const body = document.createElement("span");
+    body.className = "body";
+    const name = document.createElement("span");
+    name.className = "name";
+    name.textContent = opt.label || opt.value;
+    body.append(name);
+
+    // Show the id only when it differs from the label, so a device whose
+    // name IS its id isn't printed twice.
+    const meta = [opt.sub, (opt.label && opt.label !== opt.value) ? opt.value : ""]
+      .filter(Boolean).join(" \u00b7 ");
+    if (meta) {
+      const m = document.createElement("span");
+      m.className = "meta"; m.textContent = meta;
+      body.append(m);
+    }
+    b.append(tick, body);
+    b.onclick = () => pickOption(opt.value, b);
+    box.append(b);
+  }
+
+  if (S.pending.multi && S.pending.allowAll && options.length > 1) {
+    const all = document.createElement("button");
+    all.type = "button"; all.className = "opt";
+    all.textContent = "All of them";
+    all.onclick = () => sendChoice(options.map(o => o.value));
+    box.append(all);
+  }
+
+  // Single-select commits on the tap; only multi-select needs a Send.
+  $("choiceSend").hidden = !S.pending.multi;
+  $("choiceSend").disabled = true;
+  reveal($("choiceCard"), "nearest");
+}
+
+function pickOption(value, btn) {
+  const p = S.pending;
+  if (!p || p.kind !== "choice") return;
+  if (!p.multi) return sendChoice([value]);
+  const on = !p.selected.has(value);
+  on ? p.selected.add(value) : p.selected.delete(value);
+  btn.setAttribute("aria-pressed", String(on));
+  $("choiceSend").disabled = p.selected.size === 0;
+}
+
+function sendChoice(values) {
+  if (!sendJson({ type:"choice_response", values })) return;
+  log(`-> selection: ${values.join(", ") || "(none)"}`);
+  closeChoice();
+}
+
+function closeChoice() {
+  S.pending = null;
+  $("choiceOpts").textContent = "";
+  render();
+}
+
+$("choiceSend").onclick = () => {
+  if (S.pending && S.pending.kind === "choice") sendChoice([...S.pending.selected]);
+};
+$("choiceCancel").onclick = () => {
+  sendJson({ type:"choice_response", cancelled:true, values:[] });
+  closeChoice();
+};
+
+/* ── Prompt ──────────────────────────────────────────────────────── */
+
+$("promptSend").onclick = () => {
+  if (!S.pending || S.pending.kind !== "prompt") return;
+  if (!sendJson({ type:"prompt_reply", value:$("promptInput").value })) return;
+  $("promptInput").value = "";
+  S.pending = null;
+  render();
+};
+$("promptInput").addEventListener("keydown", e => {
+  if (e.key === "Enter") $("promptSend").click();
+});
+
+/* ── Audio capture ───────────────────────────────────────────────── */
+
+/* One capture at a time, represented by one object. Every callback is bound
+   to its own session and checks that it is still the live one.
+
+   That check is the fix for two separate leaks. A quick tap could finish
+   before getUserMedia resolved, so the stream arrived after the release and
+   was never stopped -- the microphone stayed open with nothing able to close
+   it. And `onstop` was reassigned on each capture while cleanup called stop()
+   independently, so a PREVIOUS capture's handler could fire and auto-submit a
+   half-second fragment as an enrollment sample. */
+let activeSession = null;
+let sessionSeq = 0;
+
+async function beginCapture(button, role) {
+  if (!ready() || !idle() || !role) return;
+
+  const s = { id:++sessionSeq, button, role, stream:null, recorder:null, chunks:[], aborted:false, ended:false };
+  activeSession = s;
+  S.capture = "recording";
+  render();
+
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio:true });
+  } catch (err) {
+    if (activeSession === s) { activeSession = null; S.capture = "idle"; render(); }
+    return alertUser("bad", `Microphone unavailable: ${err.message}`);
+  }
+
+  if (activeSession !== s || s.aborted) {   // released before the mic opened
+    stream.getTracks().forEach(t => t.stop());
+    log("capture released before the microphone opened — discarded");
+    return;
+  }
+  s.stream = stream;
+
+  const mime = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus", "audio/mp4"]
+    .find(t => MediaRecorder.isTypeSupported(t)) || "";
+  s.recorder = mime ? new MediaRecorder(stream, { mimeType:mime }) : new MediaRecorder(stream);
+  s.recorder.ondataavailable = (e) => { if (e.data && e.data.size) s.chunks.push(e.data); };
+  s.recorder.onstop = () => finishCapture(s);
+  s.recorder.start();
+  render();
+
+  // Transcription is a convenience for the command box only. A challenge is
+  // verified from audio and enrollment has a known phrase — neither wants a
+  // transcript, and neither should ship a voice to Google to get one.
+  if (role === "command") startRecognition(s);
+}
+
+function endCapture() {
+  const s = activeSession;
+  if (!s || s.ended) return;
+  s.ended = true;
+  stopRecognition();
+  if (s.recorder && s.recorder.state !== "inactive") s.recorder.stop();  // -> finishCapture
+  else finishCapture(s);
+}
+
+/* Discard rather than submit: used on disconnect, tab-hide and page unload,
+   where a truncated clip must never be sent as somebody's voiceprint. */
+function abortCapture() {
+  const s = activeSession;
+  if (!s) return;
+  s.aborted = true;
+  s.ended = true;
+  stopRecognition();
+  if (s.recorder && s.recorder.state !== "inactive") { try { s.recorder.stop(); } catch {} }
+  releaseMic(s);
+  activeSession = null;
+  S.capture = "idle";
+  render();
+}
+
+function releaseMic(s) {
+  if (s.stream) { s.stream.getTracks().forEach(t => t.stop()); s.stream = null; }
+}
+
+async function finishCapture(s) {
+  if (s !== activeSession || s.settled) return;   // a stale session's handler
+  s.settled = true;
+  releaseMic(s);
+
+  if (s.aborted) { activeSession = null; S.capture = "idle"; return render(); }
+
+  const bytes = s.chunks.reduce((n, c) => n + c.size, 0);
+  log(`recorded ${s.chunks.length} chunk(s), ${bytes} bytes`);
+  if (!bytes) {
+    activeSession = null; S.capture = "idle"; render();
+    return alertUser("warn", "Nothing was recorded — hold the button while you speak.");
+  }
+
+  S.capture = "encoding"; render();
+  let wav;
+  try {
+    wav = await encodeWav(new Blob(s.chunks, { type:s.recorder.mimeType }));
+  } catch (e) {
+    activeSession = null; S.capture = "idle"; render();
+    return alertUser("bad", `Could not encode the recording: ${e.message}`);
+  }
+
+  if (s.role === "command") {
+    S.clip = wav;
+    activeSession = null;
+    S.capture = "idle";
+    render();
+    return;
+  }
+
+  // A record_required or a challenge is a question the server is BLOCKED on,
+  // and it is audio-only: there is no decision to make, so it submits itself.
+  // Sending clears the question, so the button stops offering to answer it --
+  // previously the screen was unchanged after a send, so a user who assumed
+  // the tap had missed simply recorded again, and that duplicate frame was
+  // consumed by the NEXT question.
+  const frame = s.role === "challenge"
+    ? { type:"challenge_response", audio:wav.b64, audio_format:"wav" }
+    : { type:"recording", audio:wav.b64, audio_format:"wav" };
+  const sent = sendJson(frame);
+  if (sent) {
+    log(`-> ${frame.type} (${wav.seconds.toFixed(1)}s)`);
+    if (s.role === "challenge") S.challenge = null; else S.pending = null;
+  }
+  activeSession = null;
+  S.capture = "idle";
+  render();
+}
+
+/* ── Speech recognition (transcript convenience only) ─────────────── */
+
+let recognition = null;
+
+function startRecognition(s) {
+  const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SR) return log("SpeechRecognition unavailable — type the command instead");
+  recognition = new SR();
+  recognition.continuous = false;
+  recognition.interimResults = false;
+  recognition.onresult = (e) => {
+    const said = e.results?.[0]?.[0]?.transcript;
+    if (said && !s.aborted) { S.transcript = said; render(); }
+  };
+  recognition.onerror = (e) => log(`speech recognition: ${e.error}`);
+  try { recognition.start(); }
+  catch (e) { log(`speech recognition did not start: ${e.message}`); }
+}
+
+function stopRecognition() {
+  if (!recognition) return;
+  try { recognition.stop(); } catch {}
+  recognition = null;
+}
+
+/* ── WAV encoding: 16 kHz mono PCM16, what the server's decoder expects ── */
+
+async function encodeWav(blob) {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  try {
+    const decoded = await ctx.decodeAudioData(await blob.arrayBuffer());
+    const rate = 16000;
+    const src = decoded.getChannelData(0);
+
+    let samples;
+    if (decoded.sampleRate === rate) {
+      samples = src;
+    } else {
+      const ratio = decoded.sampleRate / rate;
+      samples = new Float32Array(Math.round(src.length / ratio));
+      for (let i = 0; i < samples.length; i++) {
+        const at = i * ratio, i0 = Math.floor(at), i1 = Math.min(i0 + 1, src.length - 1);
+        const f = at - i0;
+        samples[i] = src[i0] * (1 - f) + src[i1] * f;
+      }
+    }
+
+    const buf = new ArrayBuffer(44 + samples.length * 2);
+    const view = new DataView(buf);
+    const str = (o, t) => { for (let i = 0; i < t.length; i++) view.setUint8(o + i, t.charCodeAt(i)); };
+    str(0, "RIFF");  view.setUint32(4, 36 + samples.length * 2, true);
+    str(8, "WAVE");  str(12, "fmt ");
+    view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true);
+    view.setUint32(24, rate, true); view.setUint32(28, rate * 2, true);
+    view.setUint16(32, 2, true);   view.setUint16(34, 16, true);
+    str(36, "data"); view.setUint32(40, samples.length * 2, true);
+    for (let i = 0; i < samples.length; i++) {
+      const v = Math.max(-1, Math.min(1, samples[i]));
+      view.setInt16(44 + i * 2, v < 0 ? v * 32768 : v * 32767, true);
+    }
+    return { b64: base64(buf), seconds: samples.length / rate };
+  } finally {
+    ctx.close();
+  }
+}
+
+function base64(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(s);
+}
+
+/* ── Push-to-talk wiring ─────────────────────────────────────────── */
+
+/* Pointer events cover mouse, touch and pen in one path, and capture keeps
+   the release bound to the button even if the finger slides off -- a mouseup
+   off the button never reached it, so the press stayed "held" and the
+   microphone stayed open. Space and Enter are wired too: a hold-to-talk
+   control reachable only by pointer is unusable by keyboard and invisible to
+   a screen reader. */
+function wirePtt(btn, roleFn) {
+  btn.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    btn.setPointerCapture?.(e.pointerId);
+    beginCapture(btn, roleFn());
+  });
+  for (const type of ["pointerup", "pointercancel", "pointerleave"]) {
+    btn.addEventListener(type, () => endCapture());
+  }
+  btn.addEventListener("keydown", (e) => {
+    if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); beginCapture(btn, roleFn()); }
+  });
+  btn.addEventListener("keyup", (e) => {
+    if (e.key === " " || e.key === "Enter") { e.preventDefault(); endCapture(); }
+  });
+}
+
+wirePtt($("ptt"), commandRole);
+wirePtt($("enrollPtt"), () => (enrollRole() ? "record" : null));
+
+// A press interrupted by a call, an app switch or the page going away must
+// discard, never submit.
+window.addEventListener("blur", abortCapture);
+window.addEventListener("pagehide", abortCapture);
+document.addEventListener("visibilitychange", () => { if (document.hidden) abortCapture(); });
+
+/* ── Command composition ─────────────────────────────────────────── */
+
+$("transcript").addEventListener("input", (e) => { S.transcript = e.target.value; render(); });
+$("clearClip").onclick = () => { S.clip = null; render(); };
+
+$("send").onclick = () => {
+  const text = S.transcript.trim();
+  if (!text && !S.clip) return;
+  const frame = { type:"command", text };
+  if (S.clip) { frame.audio = S.clip.b64; frame.audio_format = "wav"; }
+  if (!sendJson(frame)) return;
+  log(`-> command ${JSON.stringify(text)}${S.clip ? " +audio" : ""}`);
+  // Clear BOTH. Leaving the transcript behind meant Send stayed live with the
+  // previous command still in the box, and a second tap replayed it -- on a
+  // system that opens doors.
+  S.transcript = ""; S.clip = null;
+  render();
+};
+
+/* ── Enrollment controls ─────────────────────────────────────────── */
+
+$("enrollStart").onclick = () => {
+  // The server's reader gate starts enrollment for any command frame that
+  // arrives while nobody is enrolled, so this reuses that path rather than
+  // inventing a frame type. `starting` is always released: by the server's
+  // reply, or by this timeout if nothing comes -- the button can't stick.
+  if (!sendJson({ type:"command", text:"" })) return;
+  log("-> requesting enrollment");
+  awaitServer("the enrollment request", 10000);
+};
+
+$("enrollCancel").onclick = () => {
+  if (!sendJson({ type:"recording", cancelled:true })) return;
+  log("-> enrollment cancelled");
+  S.pending = null;          // the screen must not look like nothing happened
+  render();
+};
+
+/* ── Sidebar ─────────────────────────────────────────────────────── */
+
+let menuReturnFocus = null;
+
+function setMenu(open) {
+  S.menuOpen = open;
+  if (open) {
+    menuReturnFocus = document.activeElement;
+    render();
+    const first = document.querySelector("#sidebar button.act:not(:disabled)");
+    (first || $("sidebarClose")).focus();
+  } else {
+    render();
+    // Focus goes back where it came from, not to the top of the document --
+    // otherwise closing the panel loses a keyboard user's place entirely.
+    if (menuReturnFocus && document.contains(menuReturnFocus)) menuReturnFocus.focus();
+    menuReturnFocus = null;
+  }
+}
+
+$("menuToggle").onclick = () => setMenu(!S.menuOpen);
+$("sidebarClose").onclick = () => setMenu(false);
+$("backdrop").onclick = () => setMenu(false);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && S.menuOpen) { e.preventDefault(); setMenu(false); }
+});
+
+for (const btn of document.querySelectorAll("#sidebar button.act")) {
+  btn.onclick = () => {
+    const action = btn.dataset.action;
+    if (!sendJson({ type: "menu", action })) return;
+    log(`-> menu ${action}`);
+    // Close immediately. Whatever the action needs next arrives as a prompt or
+    // a choice on the main screen, and leaving the panel over it would hide
+    // the question the server is now blocked on.
+    setMenu(false);
+    // Treated exactly like a command in flight: nothing else may start until
+    // the server answers.
+    awaitServer(`"${action}"`, 15000);
+  };
+}
+
+/* ── Boot ────────────────────────────────────────────────────────── */
+
+$("connect").onclick = connect;
+$("disconnect").onclick = () => { log("disconnecting"); teardown(); };
+$("secret").addEventListener("keydown", e => { if (e.key === "Enter") connect(); });
+
+render();
+log("paste the shared secret, then Connect.");
+})();
+</script>
+</body>
+</html>
