@@ -4623,11 +4623,6 @@ def _install_system(name: str) -> bool:
                            timeout=3600)
         except (OSError, subprocess.TimeoutExpired) as exc:
             print(f"    [WARN] {exc}")
-        user = _login_name()
-        if shutil.which("docker") and user:
-            # Docker without sudo, from this user's next login (and for the
-            # hub's service, from its next start).
-            _sudo(["usermod", "-aG", "docker", user])
     elif name == "tailscale" and shutil.which("curl"):
         print("    Installing Tailscale (tailscale.com)...")
         try:
@@ -4663,6 +4658,7 @@ def _tailscale_operator() -> None:
         print(f"  [OK]  Tailscale operator: {user}")
     else:
         print(f"  [--]  Tailscale operator not set. Later: sudo tailscale set --operator={user}")
+        _attention(f"Tailscale operator: sudo tailscale set --operator={user}")
 
 
 def _system_timezone() -> str:
@@ -4759,10 +4755,12 @@ def _ha_token(env_file: str) -> bool:
             time.sleep(5)
     except KeyboardInterrupt:
         print("\n  Skipped. Run setup again later.")
+        _attention("Home Assistant token: not made. Run setup again.")
         return False
     print()
     if steps is None:
         print("  Home Assistant did not answer in 15 minutes. Run setup again later.")
+        _attention("Home Assistant token: Home Assistant was not up. Run setup again.")
         return False
     has_owner = not steps or any(
         s.get("step") == "user" and s.get("done") for s in steps if isinstance(s, dict))
@@ -4791,6 +4789,7 @@ def _ha_token(env_file: str) -> bool:
                 "client_id": client_id, "username": user, "password": password})
             if done.get("type") != "create_entry":
                 print("  [X]   Wrong username or password. Run setup again to retry.")
+                _attention("Home Assistant token: wrong username or password. Run setup again.")
                 return False
             code = done["result"]
         password = ""
@@ -4814,15 +4813,38 @@ def _ha_token(env_file: str) -> bool:
             raise ValueError(f"no token came back ({answer.get('error')})")
     except KeyboardInterrupt:
         print("\n  Skipped. Run setup again later.")
+        _attention("Home Assistant token: not made. Run setup again.")
         return False
     except Exception as exc:
         print(f"  [X]   Could not make the token: {exc}")
         print("        Make one in Home Assistant: Profile -> Security -> Long-lived access tokens.")
+        _attention("Home Assistant token: not made. Make one in Home Assistant "
+                   "(Profile -> Security -> Long-lived access tokens) and run setup again to paste it.")
         return False
     if not _env_file_set(env_file, "HOMEVOICE_HA_TOKEN", token):
         return False
     print("  [OK]  Token saved (the password was not kept)")
     return True
+
+
+def _docker_group() -> None:
+    """Linux: this user in the docker group, so the hub (and you) can use
+    Docker without sudo -- from the next login, and for the hub's service
+    from its next start. Checked on every run, not only after installing.
+    (Windows: Docker Desktop's installer adds you to docker-users itself.)"""
+    user = _login_name()
+    try:
+        import grp as _grp
+        import pwd as _pwd
+        group = _grp.getgrnam("docker")
+        if user in group.gr_mem or _pwd.getpwnam(user).pw_gid == group.gr_gid:
+            return
+    except (ImportError, KeyError):
+        return                    # no docker group (Docker missing) or no user
+    if _sudo(["usermod", "-aG", "docker", user]):
+        print(f"  [OK]  {user} can use Docker (from the next login)")
+    else:
+        _attention(f"Docker group: sudo usermod -aG docker {user}")
 
 
 def _docker_and_ha(online: bool) -> bool:
@@ -4831,6 +4853,8 @@ def _docker_and_ha(online: bool) -> bool:
     progress bars. True when Home Assistant is there afterwards, so the
     broker gives it a login."""
     windows = os.name == "nt"
+    if not windows and shutil.which("docker"):
+        _docker_group()
     if find_ha_container(running=True) or find_ha_container(running=False) \
             or ha_is_up(timeout=2.0):
         print("  [OK]  Home Assistant")
@@ -4840,16 +4864,22 @@ def _docker_and_ha(online: bool) -> bool:
         return False
     if not online:
         print("  No internet: skipped.")
+        _attention("Home Assistant: skipped, no internet. Run setup again when online.")
         return False
     if not shutil.which("docker"):
         if not _install_system("docker"):
             if windows:
                 print("  Start Docker Desktop once, then run setup again for Home Assistant.")
+                _attention("Home Assistant: start Docker Desktop once, then run setup again.")
             else:
                 print("  [X]   Docker did not install (its output is above).")
+                _attention("Docker did not install (its error is above). Run setup again.")
             return False
+        if not windows:
+            _docker_group()
     if windows and not docker_ready() and not start_docker(say=print):
         print("  Start Docker Desktop, then run setup again to add Home Assistant.")
+        _attention("Home Assistant: start Docker Desktop, then run setup again.")
         return False
 
     def docker(args: List[str], quiet: bool = False) -> bool:
@@ -4875,6 +4905,7 @@ def _docker_and_ha(online: bool) -> bool:
         print("  Downloading Home Assistant...")
         if not docker(["pull", _HA_IMAGE]):
             print("  [X]   The download stopped. Run setup again: it carries on.")
+            _attention("Home Assistant: the download stopped. Run setup again: it carries on.")
             return False
         config_dir = os.path.join(os.path.expanduser("~"), "homeassistant")
         ok = docker(["run", "-d", "--name", "homeassistant", "--restart=unless-stopped",
@@ -4883,6 +4914,8 @@ def _docker_and_ha(online: bool) -> bool:
                      "-v", f"{config_dir}:/config", _HA_IMAGE])
     print("  [OK]  Home Assistant is starting" if ok else
           "  [X]   Home Assistant did not start (Docker's message is above).")
+    if not ok:
+        _attention("Home Assistant did not start (Docker's message is above). Run setup again.")
     return ok
 
 
@@ -4911,6 +4944,15 @@ def _free_broker_port() -> bool:
 #: what went wrong. The separate commands (--doctor, --broker...) say more.
 _BRIEF = False
 
+#: What the one-command run skipped or could not do, said again at the end
+#: ("Needs attention"), each with what to do.
+_ATTENTION: List[str] = []
+
+
+def _attention(line: str) -> None:
+    if line not in _ATTENTION:
+        _ATTENTION.append(line)
+
 _BRIEF_DROP = re.compile(
     r"^\s*(-{20,}|={20,})\s*$|\[OK\]|\[\.\.\]|\[--\]|^\s+path: |PYTHON PACKAGES|"
     r"^\s*FILES\s*$|ASSET CHECK|Checking assets|All packages present|"
@@ -4930,6 +4972,8 @@ class _BriefOut:
         self._line += text
         while "\n" in self._line:
             line, self._line = self._line.split("\n", 1)
+            if "[WARN]" in line or line.strip().startswith("(skipped:"):
+                _attention(line.strip().replace("[WARN] ", ""))
             if line.strip() and not _BRIEF_DROP.search(line):
                 self._out.write(line + "\n")
         return len(text)
@@ -4997,6 +5041,7 @@ def _set_up_everything() -> bool:
         print("  [OK]  Mosquitto installed")
     else:
         ok = False
+        _attention("Mosquitto is missing (see above). Run setup again when online.")
         print("  [X]   Mosquitto is missing: " + (
             "winget install -e --id EclipseFoundation.Mosquitto" if windows
             else "sudo apt install -y mosquitto mosquitto-clients"))
@@ -5006,6 +5051,7 @@ def _set_up_everything() -> bool:
         print("  [OK]  Tailscale installed")
     else:
         print("  [--]  Tailscale not installed (optional)")
+        _attention("Tailscale not installed: no remote access. Run setup again when online.")
     _tailscale_operator()
 
     want_ha = False
@@ -5036,6 +5082,7 @@ def _set_up_everything() -> bool:
                     print("    " + l.strip())
         if ok and not _free_broker_port():
             print("  [WARN] The system Mosquitto is still on: the hub's broker may not start.")
+            _attention("The system Mosquitto is still on: sudo systemctl disable --now mosquitto")
     if ok:
         head("Keys")
         home = os.path.expanduser("~")
@@ -5071,7 +5118,14 @@ def _set_up_everything() -> bool:
     if not windows:
         subprocess.run(["sudo", "-k"], capture_output=True)   # forget the sudo login now
 
+    def needs_attention() -> None:
+        if _ATTENTION:
+            print("\nNeeds attention:")
+            for line in _ATTENTION:
+                print("  - " + line)
+
     if not ok:
+        needs_attention()
         print(f"\nSetup stopped above. Fix it and run {py} setup_manager.py again.")
         return False
     if by_itself:
@@ -5084,7 +5138,9 @@ def _set_up_everything() -> bool:
               + (", sign in and answer its first questions." if has_token
                  else " and create the owner account."))
         print("Then add the MQTT integration with the login above, and Tasmota.")
-    print(f"\nDone. To check everything: {py} setup_manager.py --doctor")
+    needs_attention()
+    print(("\nDone, apart from the above." if _ATTENTION else "\nDone.")
+          + f" To check everything: {py} setup_manager.py --doctor")
     return True
 
 
