@@ -67,8 +67,10 @@ Usage:
 """
 
 import datetime
+import contextlib
 import getpass
 import hashlib
+import io
 import http.client
 import importlib.util
 import ipaddress
@@ -1468,7 +1470,7 @@ def _write_secrets_file(path: str, say=print) -> bool:
     holds differently is pointed out rather than silently overwritten."""
     present = {k: os.environ.get(k, "") for k in _SECRET_KEYS}
     if os.path.isfile(path):
-        say(f"    {path} exists -- keeping it (config.py already reads it).")
+        say("  [OK]  Keys")
         try:
             if os.stat(path).st_mode & 0o077:
                 os.chmod(path, 0o600)
@@ -1503,8 +1505,7 @@ def _write_secrets_file(path: str, say=print) -> bool:
         for k in _SECRET_KEYS:
             if present[k]:
                 f.write(f"{k}={present[k]}\n")
-    say(f"    Wrote {path} (0600): " + ", ".join(k for k in _SECRET_KEYS if present[k])
-        + (f" (new: {', '.join(made)})" if made else ""))
+    say("  [OK]  Keys saved" + (" (new)" if made else "") + f" in {path}")
     # As if config.py had read it: a later step in this run checks the list.
     config.SECRETS_LOADED.extend(k for k in _SECRET_KEYS
                                  if present[k] and k not in config.SECRETS_LOADED)
@@ -1529,10 +1530,8 @@ def _fill_keys(present: dict, say=print) -> Optional[List[str]]:
         return []
     old = False
     if not NONINTERACTIVE:
-        say("    This hub has no " + " or ".join(need) + " yet.")
-        say("    Moving a hub to this machine? Its old key(s) keep its paired phones and")
-        say("    saved voices working. Without them, new ones are made.")
-        old = _prompt_yes_no("    Do you have the old key(s) to type in?")
+        say("    No " + " or ".join(need) + " yet. Old keys keep your phones and voices.")
+        old = _prompt_yes_no("    Do you have the old key(s) to paste in?")
     made = []
     for k in need:
         value = ""
@@ -1712,18 +1711,27 @@ def _service(argv) -> bool:
         print("      python3 setup_manager.py --service")
         print("  It asks for your password itself for the root half.")
         return False
-    print("\n  The hub at boot")
+    # --quiet (the full setup): only the result.
+    quiet = "--quiet" in argv
+    hush = (lambda *a, **k: None) if quiet else print
+    hush("\n  The hub at boot")
     env_file = os.path.join(home, ".homevoice", "env")
-    if not _write_secrets_file(env_file):
+    if not _write_secrets_file(env_file, say=hush):
         return False
-    _bashrc_points_at_secrets(home)
+    _bashrc_points_at_secrets(home, say=hush)
     if not os.path.isfile(os.path.join(hub_dir, "ws_server.py")):
         print(f"    [X] ws_server.py is not beside this script in {hub_dir}")
         return False
-    print("    Now the root half (systemd unit) -- sudo will ask for your password:")
+    hush("    Now the root half (systemd unit) -- sudo will ask for your password:")
     cmd = ["sudo", sys.executable, os.path.join(hub_dir, "setup_manager.py"), "--service-root",
            "--user", user, "--home", home]
-    done = subprocess.run(cmd)
+    # sudo asks on the terminal itself, so its question shows when quiet.
+    done = subprocess.run(cmd, capture_output=quiet, text=True)
+    if quiet:
+        if done.returncode == 0:
+            print("  [OK]  The hub starts at every boot (journalctl -u homevoice -f shows its log)")
+        else:
+            print((done.stdout or "") + (done.stderr or ""))
     return done.returncode == 0
 
 
@@ -1737,9 +1745,11 @@ def _startup_windows() -> bool:
     in your own Startup folder. No admin rights and no stored password (a
     task that ran before sign-in would need Windows to keep your password).
     Delete the file to stop it."""
-    print("\n  The hub at sign-in")
+    if not _BRIEF:
+        print("\n  The hub at sign-in")
     hub_dir = str(config.PROJECT_ROOT)
-    if not _write_secrets_file(os.path.join(os.path.expanduser("~"), ".homevoice", "env")):
+    if not _write_secrets_file(os.path.join(os.path.expanduser("~"), ".homevoice", "env"),
+                               say=(lambda *a, **k: None) if _BRIEF else print):
         return False
     server = os.path.join(hub_dir, "ws_server.py")
     if not os.path.isfile(server):
@@ -1756,8 +1766,11 @@ def _startup_windows() -> bool:
                 "rem Delete this file to stop that.\r\n"
                 f'cd /d "{cmd(hub_dir)}"\r\n'
                 f'start "HomeVoice hub" /min "{cmd(sys.executable)}" "{cmd(server)}"\r\n')
-    print(f"    Wrote {entry}")
-    print("    The hub starts, minimised, each time you sign in. Delete that file to stop it.")
+    if _BRIEF:
+        print("  [OK]  The hub starts when you sign in")
+    else:
+        print(f"    Wrote {entry}")
+        print("    The hub starts, minimised, each time you sign in. Delete that file to stop it.")
     return True
 
 
@@ -4513,10 +4526,11 @@ def run_setup(check_only: bool = False) -> bool:
         # Generated without asking: local, fast, no network needed.
         _generate_local_cert()
 
-    _next_steps()
-    print("\n" + "=" * 60)
-    print("  Setup finished. Review any optional items skipped above.")
-    print("=" * 60)
+    if not _BRIEF:
+        _next_steps()
+        print("\n" + "=" * 60)
+        print("  Setup finished. Review any optional items skipped above.")
+        print("=" * 60)
     return True
 
 
@@ -4593,7 +4607,7 @@ def _install_system(name: str) -> bool:
             return False
         cmd = ["winget", "install", "-e", "--id", _WINGET[name],
                "--accept-package-agreements", "--accept-source-agreements"]
-        print("    " + " ".join(cmd) + "   (Windows may ask for permission)")
+        print(f"    Installing {name.title()} (winget)...")
         try:
             subprocess.run(cmd, timeout=1800)
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -4603,7 +4617,7 @@ def _install_system(name: str) -> bool:
             _sudo(["apt-get", "install", "-y", "-o", "Dpkg::Progress-Fancy=1",
                    "mosquitto", "mosquitto-clients"])
     elif name == "docker" and shutil.which("curl"):
-        print("    Docker's own install script, from get.docker.com:")
+        print("    Installing Docker (get.docker.com)...")
         try:
             subprocess.run(["sh", "-c", "curl -fsSL https://get.docker.com | sh"],
                            timeout=3600)
@@ -4615,7 +4629,7 @@ def _install_system(name: str) -> bool:
             # hub's service, from its next start).
             _sudo(["usermod", "-aG", "docker", user])
     elif name == "tailscale" and shutil.which("curl"):
-        print("    Tailscale's own install script, from tailscale.com:")
+        print("    Installing Tailscale (tailscale.com)...")
         try:
             subprocess.run(["sh", "-c", "curl -fsSL https://tailscale.com/install.sh | sh"],
                            timeout=1800)
@@ -4646,7 +4660,7 @@ def _tailscale_operator() -> None:
         return
     user = _login_name()
     if user and _sudo(["tailscale", "set", f"--operator={user}"]):
-        print(f"  [OK]  Tailscale: {user} is its operator (the app can sign in without root)")
+        print(f"  [OK]  Tailscale operator: {user}")
     else:
         print(f"  [--]  Tailscale operator not set. Later: sudo tailscale set --operator={user}")
 
@@ -4697,21 +4711,20 @@ def _ha_token(env_file: str) -> bool:
             try:
                 with urllib.request.urlopen(req, timeout=10):
                     pass
-                print("  [OK]  Home Assistant accepted it.")
+                pass
             except urllib.error.HTTPError as e:
                 if e.code == 401:
                     print("    Home Assistant refused that token. Paste it again.")
                     continue
-                print(f"    Could not check it (Home Assistant answered {e.code}); saving it anyway.")
+                print("    Could not check it; saved anyway.")
             except (OSError, ValueError, http.client.HTTPException):
-                print("    Home Assistant is not answering yet, so it could not be checked;")
-                print("    saving it anyway (--doctor checks it later).")
+                print("    Home Assistant is not up yet; saved unchecked.")
             if not _env_file_set(env_file, "HOMEVOICE_HA_TOKEN", token):
                 return False
-            print(f"  [OK]  Token saved in {env_file} as HOMEVOICE_HA_TOKEN.")
+            print("  [OK]  Token saved")
             return True
     if not _prompt_yes_no("  Make the hub's Home Assistant token now? (asks for HA's owner login)"):
-        print("  Skipped. Run setup again, or make one in Home Assistant by hand.")
+        print("  Skipped.")
         return False
 
     def call(path: str, data=None, form: bool = False, timeout: float = 15):
@@ -4728,8 +4741,7 @@ def _ha_token(env_file: str) -> bool:
             return json.loads(r.read().decode() or "null")
 
     # Its first start can take several minutes (longer on a Pi).
-    print("  Waiting for Home Assistant to answer (its first start can take a few")
-    print("  minutes; Ctrl+C skips, and setup carries on here next time)...")
+    print("  Waiting for Home Assistant (first start takes a few minutes; Ctrl+C skips)...")
     steps, started = None, time.time()
     try:
         while time.time() - started < 900:
@@ -4756,7 +4768,7 @@ def _ha_token(env_file: str) -> bool:
         s.get("step") == "user" and s.get("done") for s in steps if isinstance(s, dict))
     try:
         if not has_owner:
-            print("  Home Assistant's owner account (you sign in to Home Assistant with it):")
+            print("  Make Home Assistant's owner account:")
             user = ""
             while not user:
                 user = input("    Username: ").strip()
@@ -4769,7 +4781,7 @@ def _ha_token(env_file: str) -> bool:
                 "client_id": client_id, "name": user, "username": user,
                 "password": password, "language": "en"})["auth_code"]
         else:
-            print("  Home Assistant already has an owner. Sign in with that account:")
+            print("  Sign in with Home Assistant's owner account:")
             user = input("    Username: ").strip()
             password = getpass.getpass("    Password (not shown): ")
             flow = call("/auth/login_flow", {
@@ -4778,8 +4790,7 @@ def _ha_token(env_file: str) -> bool:
             done = call(f"/auth/login_flow/{flow['flow_id']}", {
                 "client_id": client_id, "username": user, "password": password})
             if done.get("type") != "create_entry":
-                print("  [X]   Home Assistant refused that username or password.")
-                print("        Run setup again to retry.")
+                print("  [X]   Wrong username or password. Run setup again to retry.")
                 return False
             code = done["result"]
         password = ""
@@ -4806,12 +4817,11 @@ def _ha_token(env_file: str) -> bool:
         return False
     except Exception as exc:
         print(f"  [X]   Could not make the token: {exc}")
-        print("        Make one by hand: Home Assistant -> Profile -> Security ->")
-        print("        Long-lived access tokens, then HOMEVOICE_HA_TOKEN=<token> in the secrets file.")
+        print("        Make one in Home Assistant: Profile -> Security -> Long-lived access tokens.")
         return False
     if not _env_file_set(env_file, "HOMEVOICE_HA_TOKEN", token):
         return False
-    print(f"  [OK]  Token saved in {env_file} as HOMEVOICE_HA_TOKEN (the password was not kept).")
+    print("  [OK]  Token saved (the password was not kept)")
     return True
 
 
@@ -4825,18 +4835,16 @@ def _docker_and_ha(online: bool) -> bool:
             or ha_is_up(timeout=2.0):
         print("  [OK]  Home Assistant")
         return True
-    print("  Home Assistant is optional: the hub works without it.")
     if not _prompt_yes_no("  Install Docker and Home Assistant now? (a large download)"):
-        print("  Skipped. Run setup again any time to add it.")
+        print("  Skipped.")
         return False
     if not online:
-        print("  No internet: skipped. Run setup again when online.")
+        print("  No internet: skipped.")
         return False
     if not shutil.which("docker"):
         if not _install_system("docker"):
             if windows:
-                print("  Docker Desktop is installed or installing. Start it once (it may ask")
-                print("  to restart Windows), then run setup again to add Home Assistant.")
+                print("  Start Docker Desktop once, then run setup again for Home Assistant.")
             else:
                 print("  [X]   Docker did not install (its output is above).")
             return False
@@ -4864,9 +4872,9 @@ def _docker_and_ha(online: bool) -> bool:
     if docker(["inspect", "homeassistant"], quiet=True):
         ok = docker(["start", "homeassistant"])
     else:
-        print("  Downloading Home Assistant (Docker shows each part's progress):")
+        print("  Downloading Home Assistant...")
         if not docker(["pull", _HA_IMAGE]):
-            print("  [X]   The download did not finish. Run setup again: it carries on.")
+            print("  [X]   The download stopped. Run setup again: it carries on.")
             return False
         config_dir = os.path.join(os.path.expanduser("~"), "homeassistant")
         ok = docker(["run", "-d", "--name", "homeassistant", "--restart=unless-stopped",
@@ -4890,15 +4898,50 @@ def _free_broker_port() -> bool:
             return True                          # no Mosquitto service
         if "RUNNING" not in state and "AUTO_START" not in _run(["sc", "qc", "mosquitto"])[1]:
             return True
-        print("    The Mosquitto Windows service would take port 1883 from the hub's own broker.")
-        print("    Turning it off (it stays installed):")
+        print("    Turning off the Mosquitto Windows service (it would block the hub's broker).")
         return _as_admin_windows("net stop mosquitto & sc config mosquitto start= demand")
     if "enabled" != _run(["systemctl", "is-enabled", "mosquitto"])[1] and \
             "active" != _run(["systemctl", "is-active", "mosquitto"])[1]:
         return True
-    print("    The system Mosquitto would take port 1883 from the hub's own broker.")
-    print("    Turning it off (it stays installed):")
+    print("    Turning off the system Mosquitto (it would block the hub's broker).")
     return _sudo(["systemctl", "disable", "--now", "mosquitto"])
+
+
+#: The one-command run is BRIEF: only what is happening, what to answer and
+#: what went wrong. The separate commands (--doctor, --broker...) say more.
+_BRIEF = False
+
+_BRIEF_DROP = re.compile(
+    r"^\s*(-{20,}|={20,})\s*$|\[OK\]|\[\.\.\]|\[--\]|^\s+path: |PYTHON PACKAGES|"
+    r"^\s*FILES\s*$|ASSET CHECK|Checking assets|All packages present|"
+    r"All file assets present|ACCESS-POINT CERTIFICATE|Pinned by the phone app|"
+    r"NETWORK_BINDINGS changed|python setup_manager.py --regen-cert")
+
+
+class _BriefOut:
+    """stdout for the package and file checks in brief mode: whole lines that
+    only say "already fine" (or are section boxes) are dropped; progress bars,
+    questions and warnings pass. A partial line is passed on flush, so an
+    input() prompt still shows."""
+    def __init__(self, out):
+        self._out, self._line = out, ""
+
+    def write(self, text: str) -> int:
+        self._line += text
+        while "\n" in self._line:
+            line, self._line = self._line.split("\n", 1)
+            if line.strip() and not _BRIEF_DROP.search(line):
+                self._out.write(line + "\n")
+        return len(text)
+
+    def flush(self) -> None:
+        if self._line and not _BRIEF_DROP.search(self._line):
+            self._out.write(self._line)
+            self._line = ""
+        self._out.flush()
+
+    def __getattr__(self, name):
+        return getattr(self._out, name)
 
 
 def _set_up_everything() -> bool:
@@ -4925,16 +4968,27 @@ def _set_up_everything() -> bool:
     windows = os.name == "nt"
     py = "python" if windows else "python3"
     if _is_admin() and not windows:
-        print("  Run it as yourself, without sudo:  python3 setup_manager.py")
-        print("  sudo asks for your password only at the steps that need it.")
+        print("  Run it as yourself, without sudo: python3 setup_manager.py")
         return False
-    run_setup()
+    global _BRIEF
+    _BRIEF = True
+    print("HomeVoice hub setup. " + ("Windows asks for permission" if windows
+          else "sudo asks for your password") + " when needed; it is never saved.")
 
     def head(title: str) -> None:
-        print("\n" + "-" * 60 + f"\n  {title}\n" + "-" * 60)
+        print(f"\n== {title}")
 
-    head("SYSTEM PARTS (" + ("Windows asks for permission" if windows
-                             else "sudo asks for your password") + "; nothing is stored)")
+    head("Packages and files")
+    real_out = sys.stdout
+    sys.stdout = _BriefOut(real_out)
+    try:
+        run_setup()
+    finally:
+        sys.stdout.flush()
+        sys.stdout = real_out
+    print("  [OK]  Packages and files")
+
+    head("Mosquitto and Tailscale")
     online = _online()
     ok = True
     if find_mosquitto_tool("mosquitto"):
@@ -4949,31 +5003,46 @@ def _set_up_everything() -> bool:
     if _tailscale_found():
         print("  [OK]  Tailscale")
     elif online and _install_system("tailscale"):
-        print("  [OK]  Tailscale installed. Sign in from the app (Away from home).")
+        print("  [OK]  Tailscale installed")
     else:
-        print("  [--]  Tailscale not installed (optional: the hub works at home without it)")
+        print("  [--]  Tailscale not installed (optional)")
     _tailscale_operator()
 
     want_ha = False
     if ok:
-        head("HOME ASSISTANT (optional)")
+        head("Home Assistant (optional)")
         want_ha = _docker_and_ha(online)
         if want_ha and windows:
             # Home Assistant in Docker Desktop cannot reach 127.0.0.1 on
             # this PC: the broker's plain port listens for it (MANUAL.md).
             config.MQTT_PLAIN_BIND = ""
     if ok:
-        head("BROKER")
-        ok = _setup_broker(ha=want_ha, hint=False)
+        head("Broker")
+        # Only its result, and Home Assistant's login when one is made (it
+        # is shown once and stored nowhere).
+        said = io.StringIO()
+        with contextlib.redirect_stdout(said):
+            ok = _setup_broker(ha=want_ha, hint=False)
+        login = [l for l in said.getvalue().splitlines()
+                 if re.match(r"\s*(host|port|username|password):", l)]
+        if not ok:
+            print(said.getvalue().rstrip())
+        else:
+            print("  [OK]  Broker")
+            if login:
+                print("  Home Assistant's MQTT login (shown once, not stored; "
+                      "put it in Home Assistant's MQTT integration):")
+                for l in login:
+                    print("    " + l.strip())
         if ok and not _free_broker_port():
-            print("    [WARN] Still on: the hub's broker may not start. --doctor explains.")
+            print("  [WARN] The system Mosquitto is still on: the hub's broker may not start.")
     if ok:
-        head("SECRETS")
+        head("Keys")
         home = os.path.expanduser("~")
         env_file = os.path.join(home, ".homevoice", "env")
         ok = _write_secrets_file(env_file)
         if ok and not windows:
-            _bashrc_points_at_secrets(home)
+            _bashrc_points_at_secrets(home, say=lambda *a, **k: None)
         if ok and want_ha and windows:
             try:
                 with open(env_file, encoding="utf-8") as f:
@@ -4981,22 +5050,21 @@ def _set_up_everything() -> bool:
                 if not has:
                     with open(env_file, "a", encoding="utf-8") as f:
                         f.write("HOMEVOICE_MQTT_PLAIN_BIND=\n")
-                    print(f"    Added HOMEVOICE_MQTT_PLAIN_BIND= to {env_file} (for Home Assistant)")
+                    pass
             except OSError as exc:
                 print(f"    [WARN] could not add HOMEVOICE_MQTT_PLAIN_BIND= to {env_file}: {exc}")
     has_token = False
     if ok and want_ha:
-        head("HOME ASSISTANT TOKEN")
+        head("Home Assistant token")
         has_token = _ha_token(env_file)
     by_itself = False
     if ok:
-        head("START BY ITSELF?")
-        print("  Off unless you choose it. " + ("Windows: when you sign in." if windows
-                                                else "Linux: at every boot, as a service."))
-        print(f"  Turn it on later with:  {py} setup_manager.py --service")
-        by_itself = _prompt_yes_no("  Start the hub by itself from now on?")
+        head("Start by itself")
+        by_itself = _prompt_yes_no(
+            "  Start the hub by itself " + ("each time you sign in?" if windows
+                                            else "at every boot?"))
         if by_itself:
-            ok = _service([])
+            ok = _service(["--quiet"])
             if ok and windows:
                 os.startfile(_startup_entry())       # and start it now
                 time.sleep(8)
@@ -5004,30 +5072,19 @@ def _set_up_everything() -> bool:
         subprocess.run(["sudo", "-k"], capture_output=True)   # forget the sudo login now
 
     if not ok:
-        print(f"\n  Setup stopped at the step above. Fix it and run {py} "
-              "setup_manager.py again: finished steps are kept.")
+        print(f"\nSetup stopped above. Fix it and run {py} setup_manager.py again.")
         return False
     if by_itself:
-        head("PAIR YOUR PHONE")
+        head("Pair your phone")
         _open_pairing([])
     else:
-        print("\n  The hub is set up but not running. Start it:")
-        print(f"      {py} ws_server.py")
-        print("  Then pair your phone from a second terminal:")
-        print(f"      {py} setup_manager.py --pair")
+        print(f"\nStart the hub: {py} ws_server.py   Then pair: {py} setup_manager.py --pair")
     if want_ha:
-        print("\n  Home Assistant, once:")
-        if has_token:
-            print("    1. Open http://<this machine's address>:8123, sign in with the owner")
-            print("       account and answer its first-time questions.")
-        else:
-            print("    1. Open http://<this machine's address>:8123 and create the owner account.")
-            print("       Profile -> Security -> Long-lived access tokens -> Create. Add the line")
-            print("       HOMEVOICE_HA_TOKEN=<the token> to ~/.homevoice/env and restart the hub.")
-        print("    2. Settings -> Devices & Services -> Add integration -> MQTT, with the login")
-        print("       printed under BROKER above. Then the Tasmota integration.")
-    print(f"\n  Done. Later: --pair (another phone), --doctor (check everything),")
-    print("  --broker (Home Assistant login).")
+        print("\nHome Assistant: open http://<this machine's address>:8123"
+              + (", sign in and answer its first questions." if has_token
+                 else " and create the owner account."))
+        print("Then add the MQTT integration with the login above, and Tasmota.")
+    print(f"\nDone. To check everything: {py} setup_manager.py --doctor")
     return True
 
 
