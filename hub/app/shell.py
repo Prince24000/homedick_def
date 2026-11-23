@@ -11477,6 +11477,18 @@ class InteractiveShell:
                 registry.need_button()
             except OSError as exc:
                 event("PEOPLE", f"pairing-needs-button not written ({exc})")
+            from core import config as _cfg
+            if _cfg.PAIR_ON_BOOT:
+                # A pair-on-boot hub: open pairing now, as a restart would,
+                # so a phone can pair and register without one. The PIN
+                # above is the person choosing it.
+                try:
+                    _phones.PairingWindow().open(
+                        opened_by=_phones.PairingWindow.OPENED_BY_HUB)
+                    event("PEOPLE", "last person left: pairing open for "
+                                    f"{_phones.window_words()}")
+                except OSError as exc:
+                    event("PEOPLE", f"pairing not opened ({exc})")
         event("PEOPLE", f"{me!r} left the house ({dropped} \"just mine\" "
                         f"scene(s) deleted; {len(mine)} phone(s) signed out"
                         f"{'; nobody lives here now' if not others else ''})")

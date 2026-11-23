@@ -487,6 +487,25 @@ def leave_checks():
     check("(without that mark, an empty register is open, as before)",
           reg.may_enroll())
 
+    from core import config as _c
+    from identity import phones as _P
+    _c.PAIR_ON_BOOT = True
+    try:
+        sh = shell("augusta", ["1111"])
+        sh.biometric_store.users = ["augusta"]
+        sh.fallback.pin.pin_db.pop("chidi")
+        reg = _phones(**{"phone-a": "augusta"})
+        done = run(sh.run_menu_action("leavehouse:keep", "augusta"))
+        reg._reload_if_changed()
+        check("pair-on-boot hub: the last person leaves and pairing opens "
+              "at once, no restart", done is True
+              and _P.PairingWindow().is_open() and reg.may_enroll())
+    finally:
+        _c.PAIR_ON_BOOT = False
+        _P.PairingWindow().close()
+        if os.path.exists(reg._button_flag()):
+            os.remove(reg._button_flag())
+
     print("\nclearing the whole hub")
     from core import config
 
